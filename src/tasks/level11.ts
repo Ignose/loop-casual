@@ -1,9 +1,12 @@
 import {
+  availableAmount,
   buy,
   cliExecute,
   haveEquipped,
   itemAmount,
+  mallPrice,
   myLevel,
+  myMeat,
   runChoice,
   use,
   visitUrl,
@@ -17,6 +20,7 @@ import {
   $location,
   $monster,
   $skill,
+  byStat,
   get,
   have,
   Macro,
@@ -24,11 +28,15 @@ import {
 import { Quest, Task } from "../engine/task";
 import { CombatStrategy } from "../engine/combat";
 import { OutfitSpec, step } from "grimoire-kolmafia";
+import { tryPlayApriling } from "../engine/resources";
 
 const Diary: Task[] = [
   {
     name: "Forest",
     after: ["Start"],
+    prepare: () => {
+      tryPlayApriling("+combat");
+    },
     acquire: [{ item: $item`blackberry galoshes` }],
     completed: () => step("questL11Black") >= 2,
     do: $location`The Black Forest`,
@@ -66,10 +74,23 @@ const Diary: Task[] = [
 const Desert: Task[] = [
   {
     name: "Scrip",
-    after: ["Misc/Unlock Beach"],
+    after: ["Misc/Unlock Beach", "Misc/Unlock Island"],
+    ready: () => myMeat() >= 6000 || (step("questL11Black") >= 4 && myMeat() >= 500),
     completed: () => have($item`Shore Inc. Ship Trip Scrip`) || have($item`UV-resistant compass`),
     do: $location`The Shore, Inc. Travel Agency`,
-    choices: { 793: 1 },
+    outfit: () => {
+      if (!get("candyCaneSwordShore")) return { equip: $items`candy cane sword cane` };
+      else return {};
+    },
+    choices: () => {
+      const swordReady = haveEquipped($item`candy cane sword cane`) && !get("candyCaneSwordShore");
+      const statChoice = byStat({
+        Muscle: 1,
+        Mysticality: 2,
+        Moxie: 3,
+      });
+      return { 793: swordReady ? 5 : statChoice };
+    },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -79,6 +100,16 @@ const Desert: Task[] = [
     completed: () => have($item`UV-resistant compass`),
     do: () => buy($coinmaster`The Shore, Inc. Gift Shop`, 1, $item`UV-resistant compass`),
     limit: { tries: 1 },
+    freeaction: true,
+  },
+    {
+    name: "Milestone",
+    after: ["Misc/Unlock Beach", "Diary"],
+    ready: () => have($item`milestone`) && mallPrice($item`milestone`) < get("valueOfAdventure"),
+    acquire: [{ item: $item`milestone`, useful: () => get("desertExploration") < 100}],
+    completed: () => !have($item`milestone`) || get("desertExploration") >= 100,
+    do: () => use($item`milestone`, availableAmount($item`milestone`)),
+    limit: { tries: 20 },
     freeaction: true,
   },
   {

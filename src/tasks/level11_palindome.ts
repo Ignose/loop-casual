@@ -1,4 +1,4 @@
-import { create, Item, myHash, runChoice, use, visitUrl } from "kolmafia";
+import { create, haveEquipped, Item, myDaycount, myHash, myMaxhp, restoreHp, runChoice, use, visitUrl } from "kolmafia";
 import {
   $effect,
   $familiar,
@@ -15,8 +15,11 @@ import {
   uneffect,
 } from "libram";
 import { Quest, Task } from "../engine/task";
-import { CombatStrategy } from "../engine/combat";
-import { step } from "grimoire-kolmafia";
+import { CombatStrategy, killMacro } from "../engine/combat";
+import { OutfitSpec, step } from "grimoire-kolmafia";
+import { globalStateCache } from "../engine/state";
+import { Priorities } from "../engine/priority";
+import { tryPlayApriling } from "../engine/resources";
 
 export function shenItem(item: Item) {
   return (
@@ -40,41 +43,139 @@ const Copperhead: Task[] = [
     ready: () =>
       step("questL11Shen") === 2 || step("questL11Shen") === 4 || step("questL11Shen") === 6,
     completed: () => step("questL11Shen") === 999,
+    prepare: () => {
+      if (have($item`crappy waiter disguise`))
+        ensureEffect($effect`Crappily Disguised as a Waiter`);
+    },
     do: $location`The Copperhead Club`,
-    choices: { 852: 1, 853: 1, 854: 1 },
-    limit: { tries: 16 },
+    combat: new CombatStrategy().kill($monster`Mob Penguin Capo`),
+    orbtargets: () => {
+      if (have($familiar`Robortender`)) return [$monster`Mob Penguin Capo`];
+      return [];
+    },
+    outfit: (): OutfitSpec => {
+      if (have($familiar`Robortender`)) {
+        const target = globalStateCache.orb().prediction($location`The Copperhead Club`);
+        if (target === $monster`Mob Penguin Capo`)
+          return { equip: $items`miniature crystal ball`, familiar: $familiar`Robortender` };
+        else return { equip: $items`miniature crystal ball` };
+      }
+      return {};
+    },
+    choices: () => {
+      return {
+        852: 1,
+        853: 1,
+        854: 1,
+        855: get("copperheadClubHazard") !== "lantern" ? 3 : 4,
+      };
+    },
+    limit: { tries: 30 }, // Extra waiter disguise adventures
   },
   {
     name: "Bat Snake",
-    after: ["Copperhead Start", "Bat/Use Sonar"],
+    after: ["Copperhead Start", "Bat/Use Sonar 1"],
     ready: () => shenItem($item`The Stankara Stone`),
-    completed: () => step("questL11Shen") === 999 || have($item`The Stankara Stone`),
+    priority: () => {
+      const jar_needed =
+        !have($item`killing jar`) &&
+        !have($familiar`Melodramedary`) &&
+        (get("gnasirProgress") & 4) === 0 &&
+        get("desertExploration") < 100;
+      if (
+        jar_needed &&
+        get("lastEncounter") === "banshee librarian" &&
+        have($skill`Emotionally Chipped`) &&
+        get("_feelEnvyUsed") < 3 &&
+        get("_feelNostalgicUsed") < 3
+      )
+        return Priorities.Wanderer;
+      else return Priorities.None;
+    },
+    completed: () =>
+      step("questL11Shen") === 999 ||
+      have($item`The Stankara Stone`) ||
+      (myDaycount() === 1 && step("questL11Shen") > 1),
     do: $location`The Batrat and Ratbat Burrow`,
-    combat: new CombatStrategy().killHard($monster`Batsnake`),
+    combat: new CombatStrategy()
+      .macro(() => {
+        const jar_needed =
+          !have($item`killing jar`) &&
+          !have($familiar`Melodramedary`) &&
+          (get("gnasirProgress") & 4) === 0 &&
+          get("desertExploration") < 100;
+        if (jar_needed && get("lastEncounter") === "banshee librarian") {
+          return Macro.trySkill($skill`Feel Nostalgic`)
+            .trySkill($skill`Feel Envy`)
+            .step(killMacro());
+        }
+        return new Macro();
+      }, $monsters`batrat, ratbat`)
+      .killHard($monster`Batsnake`)
+      .killItem(),
+    outfit: { modifier: "item", avoid: $items`broken champagne bottle` },
     limit: { soft: 10 },
-    delay: 5,
+    orbtargets: () => [],
+    delay: () => (step("questL04Bat") >= 3 ? 5 : 0),
   },
   {
     name: "Cold Snake",
-    after: ["Copperhead Start", "McLargeHuge/Ores"],
-    ready: () => shenItem($item`The First Pizza`),
-    completed: () => step("questL11Shen") === 999 || have($item`The First Pizza`),
+    after: ["Copperhead Start", "McLargeHuge/Trapper Return"],
+    ready: () => shenItem($item`The First Pizza`) && !get("noncombatForcerActive"),
+    completed: () =>
+      step("questL11Shen") === 999 ||
+      have($item`The First Pizza`) ||
+      (myDaycount() === 1 && step("questL11Shen") > 3),
+    prepare: () => {
+      restoreHp(myMaxhp());
+      tryPlayApriling("+combat");
+    },
     do: $location`Lair of the Ninja Snowmen`,
-    combat: new CombatStrategy().killHard($monster`Frozen Solid Snake`).macro((): Macro => {
-      if (!have($item`li'l ninja costume`)) return new Macro().attack().repeat();
-      else return new Macro();
-    }),
+    outfit: () => {
+      const spec: OutfitSpec = {
+        modifier: "50 combat, init",
+        skipDefaults: true,
+        familiar: $familiar`Jumpsuited Hound Dog`,
+        avoid: $items`miniature crystal ball`,
+      };
+      if (have($familiar`Trick-or-Treating Tot`) && !have($item`li'l ninja costume`))
+        spec.familiar = $familiar`Trick-or-Treating Tot`;
+      if (
+        have($item`latte lovers member's mug`) &&
+        get("latteModifier").includes("Combat Rate: 10")
+      ) {
+        // Ensure kramco does not override +combat
+        spec.offhand = $item`latte lovers member's mug`;
+      }
+      return spec;
+    },
+    combat: new CombatStrategy().killHard([
+      $monster`Frozen Solid Snake`,
+      $monster`ninja snowman assassin`,
+    ]),
+    orbtargets: () => undefined, // no assassins in orbs
     limit: { soft: 10 },
     delay: 5,
   },
   {
     name: "Hot Snake Precastle",
     after: ["Copperhead Start", "Giant/Ground"],
-    ready: () => shenItem($item`Murphy's Rancid Black Flag`) && step("questL10Garbage") < 10,
+    ready: () =>
+      shenItem($item`Murphy's Rancid Black Flag`) && !have($item`steam-powered model rocketship`),
     completed: () => step("questL11Shen") === 999 || have($item`Murphy's Rancid Black Flag`),
     do: $location`The Castle in the Clouds in the Sky (Top Floor)`,
     outfit: { equip: $items`Mohawk wig`, modifier: "-combat" },
-    choices: { 675: 4, 676: 4, 677: 4, 678: 1, 679: 1, 1431: 4 },
+    choices: () => {
+      return {
+        675: 4,
+        676: 4,
+        677: step("questL10Garbage") >= 10 ? 2 : 1,
+        678: step("questL10Garbage") >= 10 ? 3 : 1,
+        679: 1,
+        1431: haveEquipped($item`Mohawk wig`) ? 4 : 1,
+      };
+    },
+    orbtargets: () => [],
     combat: new CombatStrategy().killHard($monster`Burning Snake of Fire`),
     limit: { soft: 10 },
     delay: 5,
@@ -82,11 +183,14 @@ const Copperhead: Task[] = [
   {
     name: "Hot Snake Postcastle",
     after: ["Copperhead Start", "Giant/Ground"],
-    ready: () => shenItem($item`Murphy's Rancid Black Flag`) && step("questL10Garbage") >= 10,
+    ready: () =>
+      shenItem($item`Murphy's Rancid Black Flag`) && have($item`steam-powered model rocketship`),
     completed: () => step("questL11Shen") === 999 || have($item`Murphy's Rancid Black Flag`),
     do: $location`The Castle in the Clouds in the Sky (Top Floor)`,
+    choices: { 675: 4, 676: 4, 677: 1, 678: 1, 679: 1, 1431: 4 },
     outfit: { modifier: "+combat" },
     combat: new CombatStrategy().killHard($monster`Burning Snake of Fire`),
+    orbtargets: () => [],
     limit: { soft: 10 },
     delay: 5,
   },
@@ -178,10 +282,18 @@ const Zepplin: Task[] = [
       { item: $item`glark cable`, useful: () => get("_glarkCableUses") < 5 },
       { item: $item`Red Zeppelin ticket` },
     ],
+    prepare: () => {
+      if (have($item`Red Zeppelin ticket`)) return;
+      visitUrl("woods.php");
+      visitUrl("shop.php?whichshop=blackmarket");
+      visitUrl("shop.php?whichshop=blackmarket&action=buyitem&whichrow=289&ajax=1&quantity=1");
+      if (!have($item`Red Zeppelin ticket`))
+        throw `Unable to buy Red Zeppelin ticket; please buy manually`;
+    },
     completed: () => step("questL11Ron") >= 5,
     do: $location`The Red Zeppelin`,
     combat: new CombatStrategy()
-      .kill($monster`Ron "The Weasel" Copperhead`)
+      .killHard($monster`Ron "The Weasel" Copperhead`)
       .macro((): Macro => {
         if (get("_glarkCableUses") < 5) return new Macro().tryItem($item`glark cable`);
         else return new Macro();

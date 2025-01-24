@@ -1,20 +1,36 @@
-import { myAdventures, myLevel, runChoice, useSkill, visitUrl } from "kolmafia";
-import { $effects, $familiar, $item, $items, $location, $skill, $stat, get, Macro } from "libram";
+import { myAdventures, myClass, myLevel, numericModifier, runChoice, useSkill, visitUrl } from "kolmafia";
+import { $class, $effects, $familiar, $item, $items, $location, $skill, $stat, get, have, Macro } from "libram";
 import { CombatStrategy } from "../engine/combat";
 import { Quest, Task } from "../engine/task";
 import { step } from "grimoire-kolmafia";
+import { ensureWithMPSwaps } from "../engine/moods";
 
 const Challenges: Task[] = [
   {
     name: "Speed Challenge",
     after: ["Start"],
     completed: () => get("nsContestants1") > -1,
+    prepare: () => {
+      if (numericModifier("Initiative") < 400 && have($skill`Silent Hunter`)) {
+        if (myClass() === $class`Seal Clubber`) ensureWithMPSwaps($effects`Silent Hunting`);
+        else ensureWithMPSwaps($effects`Nearly Silent Hunting`);
+      }
+
+      if (
+        have($item`designer sweatpants`) &&
+        get("sweat", 0) >= 90 &&
+        numericModifier("Initiative") < 400
+      ) {
+        // Use visit URL to avoid needing to equip the pants
+        visitUrl("runskillz.php?action=Skillz&whichskill=7419&targetplayer=0&pwd&quantity=1");
+      }
+    },
     do: (): void => {
       visitUrl("place.php?whichplace=nstower&action=ns_01_contestbooth");
       runChoice(1);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "init" },
+    outfit: { modifier: "init", familiar: $familiar`Oily Woim` },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -28,7 +44,7 @@ const Challenges: Task[] = [
       runChoice(2);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "moxie" },
+    outfit: { modifier: "moxie" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -42,7 +58,7 @@ const Challenges: Task[] = [
       runChoice(2);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "muscle" },
+    outfit: { modifier: "muscle" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -56,7 +72,7 @@ const Challenges: Task[] = [
       runChoice(2);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "mysticality" },
+    outfit: { modifier: "mysticality" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -70,7 +86,7 @@ const Challenges: Task[] = [
       runChoice(3);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "hot dmg, hot spell dmg" },
+    outfit: { modifier: "hot dmg, hot spell dmg" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -84,7 +100,7 @@ const Challenges: Task[] = [
       runChoice(3);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "cold dmg, cold spell dmg" },
+    outfit: { modifier: "cold dmg, cold spell dmg" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -98,7 +114,7 @@ const Challenges: Task[] = [
       runChoice(3);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "spooky dmg, spooky spell dmg" },
+    outfit: { modifier: "spooky dmg, spooky spell dmg" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -112,7 +128,7 @@ const Challenges: Task[] = [
       runChoice(3);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "stench dmg, stench spell dmg" },
+    outfit: { modifier: "stench dmg, stench spell dmg" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -126,7 +142,7 @@ const Challenges: Task[] = [
       runChoice(3);
       runChoice(6);
     },
-    outfit: { familiar: $familiar`Left-Hand Man`, modifier: "sleaze dmg, sleaze spell dmg" },
+    outfit: { modifier: "sleaze dmg, sleaze spell dmg" },
     limit: { tries: 1 },
     freeaction: true,
   },
@@ -379,7 +395,6 @@ export const TowerQuest: Quest = {
       do: () => visitUrl("place.php?whichplace=nstower&action=ns_11_prism"),
       limit: { tries: 1 },
       freeaction: true,
-      noadventures: true,
     },
   ],
 };

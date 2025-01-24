@@ -51,6 +51,7 @@ import {
 } from "libram";
 import { args } from "../main";
 import { Quest } from "../engine/task";
+import { Priorities } from "../engine/priority";
 
 export const DietQuest: Quest = {
   name: "Diet",
@@ -58,6 +59,7 @@ export const DietQuest: Quest = {
     {
       name: "Consume",
       after: [],
+      priority: () => Priorities.Free,
       completed: () =>
         myDaycount() > 1 || (myFullness() >= args.stomach && myInebriety() >= args.liver),
       ready: () => myBasestat(myPrimestat()) >= 149 || myAdventures() <= 1,
@@ -88,11 +90,11 @@ export const DietQuest: Quest = {
       },
       limit: { tries: 1 },
       freeaction: true,
-      noadventures: true,
     },
     {
       name: "Numberology",
       after: [],
+      priority: () => Priorities.Free,
       completed: () => get("_universeCalculated") >= get("skillLevel144"),
       ready: () => myAdventures() > 0 && Object.keys(reverseNumberology()).includes("69"),
       do: (): void => {
@@ -101,11 +103,11 @@ export const DietQuest: Quest = {
       },
       limit: { tries: 5 },
       freeaction: true,
-      noadventures: true,
     },
     {
       name: "Sausage",
       after: ["Consume"],
+      priority: () => Priorities.Free,
       completed: () => !have($item`Kramco Sausage-o-Matic™`) || get("_sausagesEaten") >= 23, // Cap at 23 sausages to avoid burning through an entire supply
       ready: () => have($item`magical sausage casing`),
       do: (): void => {
@@ -121,18 +123,17 @@ export const DietQuest: Quest = {
       },
       limit: { tries: 23 },
       freeaction: true,
-      noadventures: true,
     },
     {
       name: "Hourglass",
       after: [],
+      priority: () => Priorities.Free,
       completed: () => !have($item`etched hourglass`) || get("_etchedHourglassUsed"),
       do: (): void => {
         use($item`etched hourglass`);
       },
       limit: { tries: 1 },
       freeaction: true,
-      noadventures: true,
     },
   ],
 };
@@ -330,6 +331,7 @@ function menu(): MenuItem<MenuData>[] {
     new MenuItem($item`deviled egg`),
     new MenuItem($item`spaghetti breakfast`, { maximum: spaghettiBreakfast }),
     new MenuItem($item`extra-greasy slider`),
+    new MenuItem($item`jumping horseradish`),
     new MenuItem(mallMin(lasagnas)),
     new MenuItem(mallMin(smallEpics)),
 
@@ -373,8 +375,9 @@ function shotglassMenu() {
 }
 
 function consumeDiet(diet: Diet<MenuData>, mpa: number) {
-  const plannedDietEntries = diet.entries.sort(
-    (a, b) => itemPriority(b.menuItems) - itemPriority(a.menuItems)
+  const plannedDietEntries = [...diet.entries].sort(
+    (a, b) =>
+      itemPriority([...b.menuItems]) - itemPriority([...a.menuItems])
   );
 
   print(`Diet Plan:`);

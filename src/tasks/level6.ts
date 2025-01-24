@@ -1,49 +1,88 @@
-import { drink, Item, itemAmount, myLevel, toInt, visitUrl } from "kolmafia";
-import { $item, $items, $location, $monsters, $skill, have } from "libram";
+import { drink, Item, itemAmount, toInt, visitUrl } from "kolmafia";
+import { $item, $items, $location, $monsters, $skill, get, have } from "libram";
 import { CombatStrategy } from "../engine/combat";
+import { atLevel } from "../lib";
+import { Priorities } from "../engine/priority";
 import { Quest } from "../engine/task";
 import { step } from "grimoire-kolmafia";
+import { tryForceNC, tryPlayApriling } from "../engine/resources";
 
 export const FriarQuest: Quest = {
   name: "Friar",
   tasks: [
     {
       name: "Start",
-      after: ["Toot/Finish"],
-      ready: () => myLevel() >= 6,
+      after: [],
+      ready: () => atLevel(6),
       completed: () => step("questL06Friar") !== -1,
       do: () => visitUrl("council.php"),
       limit: { tries: 1 },
+      priority: () => Priorities.Free,
       freeaction: true,
     },
     {
       name: "Heart",
       after: ["Start"],
+      priority: () => {
+        if (
+          get("noncombatForcerActive") &&
+          have($item`latte lovers member's mug`) &&
+          !get("latteUnlocks").includes("wing")
+        )
+          return { score: -2, reason: "Still need latte here" };
+        else return Priorities.None;
+      },
       completed: () => have($item`box of birthday candles`) || step("questL06Friar") === 999,
       do: $location`The Dark Heart of the Woods`,
-      outfit: { modifier: "-combat" },
-      limit: { soft: 20 },
+      outfit: () => {
+        if (have($item`latte lovers member's mug`) && !get("latteUnlocks").includes("wing")) {
+          return { modifier: "-combat", equip: $items`latte lovers member's mug` };
+        }
+        return { modifier: "-combat" };
+      },
+      ncforce: true,
+      limit: { tries: 24 },
     },
     {
       name: "Neck",
       after: ["Start"],
+      prepare: () => {
+        tryForceNC();
+        tryPlayApriling("-combat");
+      },
       completed: () => have($item`dodecagram`) || step("questL06Friar") === 999,
       do: $location`The Dark Neck of the Woods`,
       outfit: { modifier: "-combat" },
       choices: { 1428: 2 },
-      limit: { soft: 20 },
+      ncforce: true,
+      limit: { tries: 24 },
     },
     {
       name: "Elbow",
       after: ["Start"],
+      priority: () => {
+        if (
+          get("noncombatForcerActive") &&
+          have($item`latte lovers member's mug`) &&
+          !get("latteUnlocks").includes("vitamins")
+        )
+          return { score: -2, reason: "Still need latte here" };
+        else return Priorities.None;
+      },
       completed: () => have($item`eldritch butterknife`) || step("questL06Friar") === 999,
       do: $location`The Dark Elbow of the Woods`,
-      outfit: { modifier: "-combat" },
-      limit: { soft: 20 },
+      outfit: () => {
+        if (have($item`latte lovers member's mug`) && !get("latteUnlocks").includes("vitamins")) {
+          return { modifier: "-combat", equip: $items`latte lovers member's mug` };
+        }
+        return { modifier: "-combat" };
+      },
+      ncforce: true,
+      limit: { tries: 24 },
     },
     {
       name: "Finish",
-      after: ["Heart", "Neck", "Elbow"],
+      after: ["Heart", "Elbow", "Neck"],
       completed: () => step("questL06Friar") === 999,
       do: () => visitUrl("friars.php?action=ritual&pwd"),
       limit: { tries: 1 },
@@ -134,8 +173,6 @@ export const OrganQuest: Quest = {
       do: () => visitUrl("pandamonium.php?action=mourn&preaction=observe"),
       outfit: { equip: $items`observational glasses` },
       limit: { tries: 1 },
-      freeaction: true,
-      noadventures: true,
     },
     {
       name: "Azazel",
@@ -143,8 +180,6 @@ export const OrganQuest: Quest = {
       completed: () => step("questM10Azazel") === 999,
       do: () => visitUrl("pandamonium.php?action=temp"),
       limit: { tries: 1 },
-      freeaction: true,
-      noadventures: true,
     },
     {
       name: "Finish",
@@ -153,7 +188,6 @@ export const OrganQuest: Quest = {
       do: () => drink($item`steel margarita`),
       limit: { tries: 1 },
       freeaction: true,
-      noadventures: true,
     },
   ],
 };

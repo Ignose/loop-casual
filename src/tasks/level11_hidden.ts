@@ -1,12 +1,14 @@
-import { cliExecute, myHash, toInt, use, visitUrl } from "kolmafia";
+import { cliExecute, Item, myHash, toInt, use, visitUrl } from "kolmafia";
 import {
   $effect,
   $effects,
+  $familiar,
   $item,
   $items,
   $location,
   $monster,
   $monsters,
+  $skill,
   get,
   have,
   Macro,
@@ -15,6 +17,7 @@ import { Quest, Task } from "../engine/task";
 import { CombatStrategy } from "../engine/combat";
 import { runawayValue } from "../engine/resources";
 import { step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
 
 function manualChoice(whichchoice: number, option: number) {
   return visitUrl(`choice.php?whichchoice=${whichchoice}&pwd=${myHash()}&option=${option}`);
@@ -100,12 +103,13 @@ const use_writ = new Macro().if_(
 const Apartment: Task[] = [
   {
     name: "Open Apartment",
-    after: ["Open City"],
+    after: ["Get Machete", "Open City"],
     completed: () => get("hiddenApartmentProgress") >= 1,
     do: $location`An Overgrown Shrine (Northwest)`,
     outfit: {
       equip: $items`antique machete`,
     },
+    combat: new CombatStrategy().killHard(),
     choices: { 781: 1 },
     limit: { tries: 4 },
     freecombat: true,
@@ -113,7 +117,11 @@ const Apartment: Task[] = [
   },
   {
     name: "Apartment Files", // Get the last McClusky files here if needed, as a backup plan
-    after: ["Office Files"],
+    after: ["Open Apartment", "Office Files", "Banish Janitors"],
+    priority: () =>
+      have($effect`Once-Cursed`) || have($effect`Twice-Cursed`) || have($effect`Thrice-Cursed`)
+        ? Priorities.Effect
+        : Priorities.None,
     completed: () =>
       have($item`McClusky file (page 5)`) ||
       have($item`McClusky file (complete)`) ||
@@ -122,29 +130,46 @@ const Apartment: Task[] = [
     combat: new CombatStrategy()
       .killHard($monster`ancient protector spirit (The Hidden Apartment Building)`)
       .kill($monster`pygmy witch accountant`)
-      .banish($monsters`pygmy janitor, pygmy witch lawyer`)
-      .macro(new Macro().step(use_writ), $monster`pygmy shaman`)
+      .banish($monster`pygmy janitor`)
+      .banish($monster`pygmy witch lawyer`)
       .ignoreNoBanish($monster`pygmy shaman`)
       .ignore(),
-    limit: { tries: 9 },
+    orbtargets: () => {
+      if (have($effect`Thrice-Cursed`)) return [$monster`pygmy witch accountant`];
+      else return [$monster`pygmy shaman`, $monster`pygmy witch accountant`];
+    },
+    post: makeCompleteFile,
+    outfit: { equip: $items`miniature crystal ball, deft pirate hook` },
+    limit: { soft: 9 },
     choices: { 780: 1 },
   },
   {
     name: "Apartment",
     after: ["Open Apartment", "Apartment Files"], // Wait until after all needed pygmy witch lawyers are done
+    priority: () =>
+      have($effect`Once-Cursed`) || have($effect`Twice-Cursed`) || have($effect`Thrice-Cursed`)
+        ? Priorities.MinorEffect
+        : Priorities.None,
     completed: () => get("hiddenApartmentProgress") >= 7,
-    acquire: [
-      { item: $item`short writ of habeas corpus`, num: 1, price: runawayValue, optional: true },
-    ],
     do: $location`The Hidden Apartment Building`,
     combat: new CombatStrategy()
       .killHard($monster`ancient protector spirit (The Hidden Apartment Building)`)
-      .banish($monsters`pygmy janitor, pygmy witch lawyer, pygmy witch accountant`)
-      .macro(new Macro().step(use_writ), $monster`pygmy shaman`)
+      .banish($monster`pygmy janitor`)
+      .banish($monsters`pygmy witch lawyer, pygmy witch accountant`)
       .ignoreNoBanish($monster`pygmy shaman`)
       .ignore(),
+    orbtargets: () => {
+      if (have($effect`Thrice-Cursed`)) return [];
+      else return [$monster`pygmy shaman`];
+    },
+    post: makeCompleteFile,
+    outfit: () => {
+      if (have($effect`Twice-Cursed`) && $location`The Hidden Apartment Building`.turnsSpent === 8)
+        return { equip: $items`candy cane sword cane, miniature crystal ball, deft pirate hook` };
+      return { equip: $items`miniature crystal ball, deft pirate hook` };
+    },
     choices: { 780: 1 },
-    limit: { tries: 9 },
+    limit: { soft: 9 },
   },
   {
     name: "Finish Apartment",
@@ -160,9 +185,10 @@ const Apartment: Task[] = [
 const Office: Task[] = [
   {
     name: "Open Office",
-    after: ["Open City"],
+    after: ["Get Machete", "Open City"],
     completed: () => get("hiddenOfficeProgress") >= 1,
     do: $location`An Overgrown Shrine (Northeast)`,
+    combat: new CombatStrategy().killHard(),
     outfit: {
       equip: $items`antique machete`,
     },
@@ -173,7 +199,7 @@ const Office: Task[] = [
   },
   {
     name: "Office Files",
-    after: ["Open Office"],
+    after: ["Open Office", "Banish Janitors"],
     completed: () =>
       (have($item`McClusky file (page 1)`) &&
         have($item`McClusky file (page 2)`) &&
@@ -184,49 +210,56 @@ const Office: Task[] = [
       get("hiddenOfficeProgress") >= 7 ||
       $location`The Hidden Office Building`.turnsSpent >= 10,
     do: $location`The Hidden Office Building`,
+    post: makeCompleteFile,
     combat: new CombatStrategy()
       .kill($monster`pygmy witch accountant`)
-      .banish($monsters`pygmy janitor, pygmy headhunter, pygmy witch lawyer`),
+      .banish($monster`pygmy janitor`)
+      .banish($monsters`pygmy headhunter, pygmy witch lawyer`),
     choices: { 786: 2 },
-    limit: { tries: 10 },
+    limit: { soft: 10 },
   },
   {
     name: "Office Clip",
     after: ["Office Files", "Apartment Files"],
-    acquire: [
-      { item: $item`short writ of habeas corpus`, num: 1, price: runawayValue, optional: true },
-    ],
     completed: () =>
       have($item`boring binder clip`) ||
       have($item`McClusky file (complete)`) ||
       get("hiddenOfficeProgress") >= 7,
     do: $location`The Hidden Office Building`,
+    post: makeCompleteFile,
     choices: { 786: 2 },
-    combat: new CombatStrategy()
-      .macro(
-        use_writ,
-        $monsters`pygmy witch accountant, pygmy janitor, pygmy headhunter, pygmy witch lawyer`
-      )
-      .ignore(),
+    combat: new CombatStrategy().ignore(),
     limit: { tries: 6 },
   },
   {
     name: "Office Boss",
     after: ["Office Clip"],
-    acquire: [
-      { item: $item`short writ of habeas corpus`, num: 1, price: runawayValue, optional: true },
-    ],
     completed: () => get("hiddenOfficeProgress") >= 7,
     do: $location`The Hidden Office Building`,
+    post: makeCompleteFile,
     choices: { 786: 1 },
     combat: new CombatStrategy()
       .killHard($monster`ancient protector spirit (The Hidden Office Building)`)
-      .macro(
-        use_writ,
-        $monsters`pygmy witch accountant, pygmy janitor, pygmy headhunter, pygmy witch lawyer`
-      )
-      .ignore(),
-    limit: { tries: 5 },
+      .ignore()
+      .macro(() => {
+        const palindome_dudes_done = have(Item.get(7262)) || step("questL11Palindome") >= 3;
+        if (
+          get("banishedPhyla").includes("beast") &&
+          officeBanishesDone() &&
+          palindome_dudes_done
+        ) {
+          return Macro.trySkill($skill`%fn, Release the Patriotic Screech!`);
+        }
+        return new Macro();
+      }),
+    outfit: () => {
+      const palindome_dudes_done = have(Item.get(7262)) || step("questL11Palindome") >= 3;
+      if (get("banishedPhyla").includes("beast") && officeBanishesDone() && palindome_dudes_done)
+        return { familiar: $familiar`Patriotic Eagle` };
+      return {};
+    },
+    orbtargets: () => [],
+    limit: { soft: 10 },
   },
   {
     name: "Finish Office",
@@ -351,3 +384,31 @@ export const HiddenQuest: Quest = {
     },
   ],
 };
+
+function makeCompleteFile(): void {
+  if (
+    have($item`McClusky file (page 1)`) &&
+    have($item`McClusky file (page 2)`) &&
+    have($item`McClusky file (page 3)`) &&
+    have($item`McClusky file (page 4)`) &&
+    have($item`McClusky file (page 5)`) &&
+    have($item`boring binder clip`)
+  ) {
+    cliExecute("make McClusky file (complete)");
+  }
+}
+
+function officeBanishesDone(): boolean {
+  if (get("hiddenHospitalProgress") < 7) return false;
+  if (get("hiddenApartmentProgress") < 7) return false;
+  if (get("hiddenBowlingAlleyProgress") < 7) return false;
+  return (
+    (have($item`McClusky file (page 1)`) &&
+      have($item`McClusky file (page 2)`) &&
+      have($item`McClusky file (page 3)`) &&
+      have($item`McClusky file (page 4)`) &&
+      have($item`McClusky file (page 5)`)) ||
+    have($item`McClusky file (complete)`) ||
+    get("hiddenOfficeProgress") >= 7
+  );
+}

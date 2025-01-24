@@ -1,69 +1,111 @@
-import { OutfitSpec } from "grimoire-kolmafia";
 import {
-  bjornifyFamiliar,
   buy,
   cliExecute,
+  Effect,
   Familiar,
   familiarWeight,
-  floor,
+  getFuel,
+  getProperty,
+  getWorkshed,
+  haveEquipped,
   Item,
   itemAmount,
-  mallPrice,
+  Location,
   Monster,
-  myLevel,
+  myAscensions,
+  myClass,
+  myFamiliar,
+  myFury,
+  myMaxmp,
+  myMeat,
+  myMp,
   myTurncount,
+  numericModifier,
   retrieveItem,
   Skill,
+  toInt,
   totalTurnsPlayed,
   use,
-  weightAdjustment,
+  useFamiliar,
+  useSkill,
+  visitUrl,
 } from "kolmafia";
 import {
+  $class,
   $effect,
   $familiar,
+  $familiars,
   $item,
   $items,
+  $location,
   $monster,
   $skill,
+  AprilingBandHelmet,
   AsdonMartin,
-  ensureEffect,
+  CinchoDeMayo,
+  Counter,
   get,
-  getBanishedMonsters,
+  getActiveEffects,
   getKramcoWandererChance,
-  getModifier,
   have,
   Macro,
-  sum,
+  Modes,
+  set,
+  SourceTerminal,
 } from "libram";
-import { debug } from "../lib";
+import {
+  CombatResource as BaseCombatResource,
+  DelayedMacro,
+  Outfit,
+  OutfitSpec,
+  step,
+} from "grimoire-kolmafia";
+import { atLevel } from "../lib";
+import { args } from "../args";
+import { killMacro } from "./combat";
+import { BanishState } from "./state";
+import { customRestoreMp } from "./moods";
+import { Task } from "./task";
 
 export interface Resource {
   name: string;
   available: () => boolean;
   prepare?: () => void;
-  equip?: Item | Familiar | Item[] | OutfitSpec;
+  equip?: Item | Familiar | OutfitSpec | OutfitSpec[];
+  effect?: Effect;
   chance?: () => number;
 }
 
-export interface CombatResource extends Resource {
-  do: Item | Skill | Macro;
-}
+export type CombatResource = Resource & BaseCombatResource;
 
-export interface BanishSource extends CombatResource {
+type BanishSimpleDo = CombatResource & {
   do: Item | Skill;
+};
+type BanishMacroDo = CombatResource & {
+  do: Macro;
+  tracker: Item | Skill;
+};
+export type BanishSource = BanishSimpleDo | BanishMacroDo;
+function getTracker(source: BanishSource): Item | Skill {
+  if ("tracker" in source) return source.tracker;
+  return source.do;
 }
 
-export const banishSources: BanishSource[] = [
+const banishSources: BanishSource[] = [
   {
     name: "Bowl Curveball",
-    available: () => have($item`cosmic bowling ball`),
+    available: () =>
+      have($item`cosmic bowling ball`) || get("cosmicBowlingBallReturnCombats") === 0,
     do: $skill`Bowl a Curveball`,
   },
   {
     name: "Asdon Martin",
     available: (): boolean => {
+      if (args.debug.lastasdonbumperturn && myTurncount() - args.debug.lastasdonbumperturn > 30)
+        return false;
+
       // From libram
-      if (!AsdonMartin.installed()) return false;
+      if (!asdonFualable(50)) return false;
       const banishes = get("banishedMonsters").split(":");
       const bumperIndex = banishes
         .map((string) => string.toLowerCase())
@@ -71,13 +113,29 @@ export const banishSources: BanishSource[] = [
       if (bumperIndex === -1) return true;
       return myTurncount() - parseInt(banishes[bumperIndex + 1]) > 30;
     },
-    prepare: () => AsdonMartin.fillTo(50),
+    prepare: () => asdonFillTo(50),
     do: $skill`Asdon Martin: Spring-Loaded Front Bumper`,
+  },
+  {
+    name: "Spring Shoes Kick Away",
+    available: () => have($item`spring shoes`) && !have($effect`Everything Looks Green`),
+    equip: $item`spring shoes`,
+    do: Macro.skill($skill`Spring Kick`).skill($skill`Spring Away`),
+    tracker: $skill`Spring Kick`,
   },
   {
     name: "Feel Hatred",
     available: () => get("_feelHatredUsed") < 3 && have($skill`Emotionally Chipped`),
     do: $skill`Feel Hatred`,
+  },
+  {
+    name: "Latte",
+    available: () =>
+      (!get("_latteBanishUsed") || (get("_latteRefillsUsed") < 2 && myTurncount() < 1000)) && // Save one refill for aftercore
+      have($item`latte lovers member's mug`),
+    prepare: refillLatte,
+    do: $skill`Throw Latte on Opponent`,
+    equip: $item`latte lovers member's mug`,
   },
   {
     name: "Reflex Hammer",
@@ -88,7 +146,15 @@ export const banishSources: BanishSource[] = [
   {
     name: "Snokebomb",
     available: () => get("_snokebombUsed") < 3 && have($skill`Snokebomb`),
+    prepare: () => {
+      if (myMp() < 50 && myMaxmp() >= 50) customRestoreMp(50);
+    },
     do: $skill`Snokebomb`,
+    equip: [
+      // for MP
+      { equip: $items`sea salt scrubs` },
+      { equip: $items`hopping socks` },
+    ],
   },
   {
     name: "KGB dart",
@@ -98,130 +164,88 @@ export const banishSources: BanishSource[] = [
     equip: $item`Kremlin's Greatest Briefcase`,
   },
   {
-    name: "Latte",
-    available: () =>
-      (!get("_latteBanishUsed") || get("_latteRefillsUsed") < 2) && // Save one refil for aftercore
-      have($item`latte lovers member's mug`),
-    prepare: (): void => {
-      if (get("_latteBanishUsed")) cliExecute("latte refill cinnamon pumpkin vanilla"); // Always unlocked
-    },
-    do: $skill`Throw Latte on Opponent`,
-    equip: $item`latte lovers member's mug`,
-  },
-  {
     name: "Middle Finger",
     available: () => !get("_mafiaMiddleFingerRingUsed") && have($item`mafia middle finger ring`),
     do: $skill`Show them your ring`,
     equip: $item`mafia middle finger ring`,
   },
-  // If needed, use banishers from the mall
   {
-    name: "Louder Than Bomb",
-    prepare: () => {
-      retrieveItem($item`Louder Than Bomb`);
-    },
-    available: () => true,
-    do: $item`Louder Than Bomb`,
+    name: "Monkey Paw",
+    available: () => have($item`cursed monkey's paw`) && get("_monkeyPawWishesUsed", 0) === 0,
+    equip: $item`cursed monkey's paw`,
+    do: $skill`Monkey Slap`,
   },
   {
-    name: "Tennis Ball",
-    prepare: () => {
-      retrieveItem($item`tennis ball`);
-    },
-    available: () => true,
-    do: $item`tennis ball`,
+    name: "Spring Shoes Kick",
+    available: () => have($item`spring shoes`),
+    equip: $item`spring shoes`,
+    do: Macro.skill($skill`Spring Kick`).step(killMacro()),
+    tracker: $skill`Spring Kick`,
   },
   {
-    name: "Divine Champagne Popper",
-    prepare: () => {
-      retrieveItem($item`divine champagne popper`);
-    },
-    available: () => true,
-    do: $item`divine champagne popper`,
-  },
-  // Turn-taking banishes: lowest priority
-  {
-    name: "Crystal Skull",
-    prepare: () => {
-      retrieveItem($item`crystal skull`);
-    },
-    available: () => true,
-    do: $item`crystal skull`,
+    name: "Batter Up",
+    available: () =>
+      have($skill`Batter Up!`) && myClass() === $class`Seal Clubber` && myFury() >= 5,
+    do: $skill`Batter Up!`,
+    equip: { weapon: $item`seal-clubbing club` },
   },
 ];
 
-export function unusedBanishes(to_banish: Monster[]): BanishSource[] {
-  const used_banishes: Set<Item | Skill> = new Set<Item | Skill>();
-  const already_banished = new Map(
-    Array.from(getBanishedMonsters(), (entry) => [entry[1], entry[0]])
-  );
-
-  // Record monsters that still need to be banished, and the banishes used
-  const not_yet_banished: Monster[] = [];
-  to_banish.forEach((monster) => {
-    const banished_with = already_banished.get(monster);
-    if (banished_with === undefined) {
-      not_yet_banished.push(monster);
-    } else {
-      used_banishes.add(banished_with);
-      // Map strange banish tracking to our resources
-      if (banished_with === $item`training scroll:  Snokebomb`)
-        used_banishes.add($skill`Snokebomb`);
-      if (banished_with === $item`tomayohawk-style reflex hammer`)
-        used_banishes.add($skill`Reflex Hammer`);
+// Return a list of all banishes not allocated to some available task
+export function unusedBanishes(banishState: BanishState, tasks: Task[]): BanishSource[] {
+  const used_banishes = new Set<Item | Skill>();
+  for (const task of tasks) {
+    if (task.combat === undefined) continue;
+    if (task.ignore_banishes?.()) continue;
+    for (const monster of task.combat.where("banish")) {
+      const banished_with = banishState.already_banished.get(monster);
+      if (banished_with !== undefined) used_banishes.add(banished_with);
     }
-  });
-  if (not_yet_banished.length === 0) return []; // All monsters banished.
+  }
 
-  debug(`Banish targets: ${not_yet_banished.join(", ")}`);
-  debug(`Banishes used: ${Array.from(used_banishes).join(", ")}`);
-  return banishSources.filter((banish) => banish.available() && !used_banishes.has(banish.do));
+  return banishSources.filter(
+    (banish) => banish.available() && !used_banishes.has(getTracker(banish))
+  );
 }
 
 export interface WandererSource extends Resource {
-  monsters: Monster[];
+  monsters: Monster[] | (() => Monster[]);
   chance: () => number;
-  macro?: Macro;
+  action?: DelayedMacro;
+  possible: () => boolean; // If it is possible to encounter this on accident in the current character state.
 }
 
 export const wandererSources: WandererSource[] = [
   {
-    name: "Voted Legs",
-    available: () =>
-      have($item`"I Voted!" sticker`) &&
-      totalTurnsPlayed() % 11 === 1 &&
-      get("lastVoteMonsterTurn") < totalTurnsPlayed() &&
-      get("_voteFreeFights") < 3 &&
-      myLevel() >= 10 &&
-      have($item`mutant legs`),
-    equip: $items`"I Voted!" sticker, mutant legs`,
-    monsters: [
-      $monster`government bureaucrat`,
-      $monster`terrible mutant`,
-      $monster`angry ghost`,
-      $monster`annoyed snake`,
-      $monster`slime blob`,
-    ],
-    chance: () => 1, // when available
+    name: "VHS Tape",
+    available: () => Counter.get("Spooky VHS Tape Monster") <= 0,
+    equip: [{}],
+    monsters: () => [get("spookyVHSTapeMonster") ?? $monster`none`],
+    chance: () => 1,
+    possible: () => Counter.get("Spooky VHS Tape Monster") <= 0,
   },
   {
-    name: "Voted Arm",
-    available: () =>
-      have($item`"I Voted!" sticker`) &&
-      totalTurnsPlayed() % 11 === 1 &&
-      get("lastVoteMonsterTurn") < totalTurnsPlayed() &&
-      get("_voteFreeFights") < 3 &&
-      myLevel() >= 10 &&
-      have($item`mutant arm`),
-    equip: $items`"I Voted!" sticker, mutant arm`,
-    monsters: [
-      $monster`government bureaucrat`,
-      $monster`terrible mutant`,
-      $monster`angry ghost`,
-      $monster`annoyed snake`,
-      $monster`slime blob`,
+    name: "Digitize",
+    available: () => SourceTerminal.have() && Counter.get("Digitize Monster") <= 0,
+    equip: [
+      { equip: $items`Space Trip safety headphones` },
+      {
+        equip: $items`unwrapped knock-off retro superhero cape`,
+        modes: { retrocape: ["heck", "hold"] },
+      },
+      {},
     ],
-    chance: () => 1, // when available
+    monsters: () => [get("_sourceTerminalDigitizeMonster") ?? $monster`none`],
+    chance: () => 1,
+    action: () => {
+      if (
+        familiarWeight($familiar`Grey Goose`) <= 10 &&
+        get("_sourceTerminalDigitizeMonster") === $monster`sausage goblin`
+      )
+        return new Macro().trySkill($skill`Emit Matter Duplicating Drones`);
+      else return new Macro();
+    },
+    possible: () => SourceTerminal.have() && Counter.get("Digitize Monster") <= 5,
   },
   {
     name: "Voted",
@@ -230,7 +254,7 @@ export const wandererSources: WandererSource[] = [
       totalTurnsPlayed() % 11 === 1 &&
       get("lastVoteMonsterTurn") < totalTurnsPlayed() &&
       get("_voteFreeFights") < 3 &&
-      myLevel() >= 10,
+      atLevel(5),
     equip: $item`"I Voted!" sticker`,
     monsters: [
       $monster`government bureaucrat`,
@@ -240,6 +264,7 @@ export const wandererSources: WandererSource[] = [
       $monster`slime blob`,
     ],
     chance: () => 1, // when available
+    possible: () => haveEquipped($item`"I Voted!" sticker`),
   },
   {
     name: "Cursed Magnifying Glass",
@@ -250,6 +275,7 @@ export const wandererSources: WandererSource[] = [
     equip: $item`cursed magnifying glass`,
     monsters: [$monster`void guy`, $monster`void slab`, $monster`void spider`],
     chance: () => 1, // when available
+    possible: () => haveEquipped($item`cursed magnifying glass`),
   },
   {
     name: "Goth",
@@ -280,6 +306,7 @@ export const wandererSources: WandererSource[] = [
       $monster`Black Crayon Spiraling Shape`,
     ],
     chance: () => [0.5, 0.4, 0.3, 0.2, 0.1, 0.1, 0.1, 0][get("_hipsterAdv")],
+    possible: () => myFamiliar() === $familiar`Artistic Goth Kid`,
   },
   {
     name: "Hipster",
@@ -293,35 +320,38 @@ export const wandererSources: WandererSource[] = [
       $monster`random scenester`,
     ],
     chance: () => [0.5, 0.4, 0.3, 0.2, 0.1, 0.1, 0.1, 0][get("_hipsterAdv")],
-  },
-  {
-    name: "Kramco (Drones)",
-    available: () =>
-      have($item`Kramco Sausage-o-Matic™`) &&
-      myLevel() >= 10 &&
-      have($familiar`Grey Goose`) &&
-      familiarWeight($familiar`Grey Goose`) >= 6 &&
-      getKramcoWandererChance() === 1,
-    equip: {
-      offhand: $item`Kramco Sausage-o-Matic™`,
-      familiar: $familiar`Grey Goose`,
-      // Get 11 famexp at the end of the fight, to maintain goose weight
-      weapon: $item`yule hatchet`,
-      famequip: $item`grey down vest`,
-      acc1: $item`teacher's pen`,
-      acc2: $item`teacher's pen`,
-      acc3: $item`teacher's pen`,
-    },
-    monsters: [$monster`sausage goblin`],
-    chance: () => getKramcoWandererChance(),
-    macro: new Macro().trySkill($skill`Emit Matter Duplicating Drones`),
+    possible: () => myFamiliar() === $familiar`Mini-Hipster`,
   },
   {
     name: "Kramco",
-    available: () => have($item`Kramco Sausage-o-Matic™`) && myLevel() >= 10,
-    equip: $item`Kramco Sausage-o-Matic™`,
+    available: () => have($item`Kramco Sausage-o-Matic™`) && atLevel(2),
+    equip: [
+      { equip: $items`Kramco Sausage-o-Matic™, Space Trip safety headphones` },
+      {
+        equip: $items`Kramco Sausage-o-Matic™, unwrapped knock-off retro superhero cape`,
+        modes: { retrocape: ["heck", "hold"] },
+      },
+      { equip: $items`Kramco Sausage-o-Matic™` },
+    ],
+    prepare: () => {
+      if (SourceTerminal.have() && SourceTerminal.getDigitizeUses() === 0) {
+        SourceTerminal.prepareDigitize();
+      }
+    },
     monsters: [$monster`sausage goblin`],
     chance: () => getKramcoWandererChance(),
+    action: () => {
+      const result = new Macro();
+      if (SourceTerminal.have() && SourceTerminal.getDigitizeUses() === 0)
+        result.trySkill($skill`Digitize`);
+      if (
+        familiarWeight($familiar`Grey Goose`) <= 10 &&
+        haveEquipped($item`Space Trip safety headphones`)
+      )
+        result.trySkill($skill`Emit Matter Duplicating Drones`);
+      return result;
+    },
+    possible: () => haveEquipped($item`Kramco Sausage-o-Matic™`),
   },
 ];
 
@@ -335,182 +365,218 @@ export interface RunawaySource extends CombatResource {
   chance: () => number;
 }
 
-// Gear and familiar to use for runaways (i.e., Bandersnatch or Stomping Boots)
-const familiarPants =
-  $items`repaid diaper, Great Wolf's beastly trousers, Greaves of the Murk Lord`.find((item) =>
-    have(item)
-  );
-const familiarEquip = have($item`astral pet sweater`)
-  ? $item`astral pet sweater`
-  : have($familiar`Cornbeefadon`)
-  ? $item`amulet coin`
-  : have($familiar`Mu`)
-  ? $item`luck incense`
-  : null;
-const familiarGear = [
-  ...$items`Daylight Shavings Helmet, Buddy Bjorn, Stephen's lab coat, hewn moon-rune spoon`,
-  ...(familiarEquip ? [familiarEquip] : []),
-  ...(familiarPants ? [familiarPants] : []),
-];
-const familiarGearBonus =
-  5 + sum(familiarGear, (item: Item) => getModifier("Familiar Weight", item));
-const familiarEffectBonus = 15;
-const runawayFamiliar = have($familiar`Frumious Bandersnatch`)
-  ? $familiar`Frumious Bandersnatch`
-  : have($familiar`Pair of Stomping Boots`)
-  ? $familiar`Pair of Stomping Boots`
-  : $familiar`none`;
-
-function availableFamiliarRunaways(otherBonus: number) {
-  if (runawayFamiliar === $familiar`none`) return 0;
-  return floor(
-    (familiarWeight(runawayFamiliar) +
-      familiarEffectBonus +
-      familiarGearBonus +
-      otherBonus +
-      (have($effect`Open Heart Surgery`) ? 10 : 0)) /
-      5
-  );
-}
-
 export const runawayValue =
   have($item`Greatest American Pants`) || have($item`navel ring of navel gazing`)
     ? 0.8 * get("valueOfAdventure")
     : get("valueOfAdventure");
 
-export const runawaySources: RunawaySource[] = [
-  {
-    name: "Bowl Curveball",
-    available: () => have($item`cosmic bowling ball`),
-    do: new Macro().skill($skill`Bowl a Curveball`),
-    chance: () => 1,
-    banishes: true,
-  },
-  {
-    name: "Asdon Martin",
-    available: (): boolean => {
-      // From libram
-      if (!AsdonMartin.installed()) return false;
-      const banishes = get("banishedMonsters").split(":");
-      const bumperIndex = banishes
-        .map((string) => string.toLowerCase())
-        .indexOf("spring-loaded front bumper");
-      if (bumperIndex === -1) return true;
-      return myTurncount() - parseInt(banishes[bumperIndex + 1]) > 30;
+function commaItemFinder(): Item | undefined {
+  const commaItem =
+    $items`aquaviolet jub-jub bird, charpuce jub-jub bird, crimsilion jub-jub bird, stomp box`.find(
+      (f) => have(f)
+    );
+
+  return commaItem;
+}
+
+export function getRunawaySources(location?: Location) {
+  const runawayFamiliarPlan = planRunawayFamiliar();
+
+  return [
+    {
+      name: "Latte (Refill)",
+      available: () =>
+        (!get("_latteBanishUsed") || get("_latteRefillsUsed") < 2) && // Save one refill for aftercore
+        have($item`latte lovers member's mug`) &&
+        shouldFinishLatte(),
+      prepare: refillLatte,
+      do: new Macro().skill($skill`Throw Latte on Opponent`),
+      chance: () => 1,
+      equip: $item`latte lovers member's mug`,
+      banishes: true,
     },
-    prepare: () => AsdonMartin.fillTo(50),
-    do: new Macro().skill($skill`Asdon Martin: Spring-Loaded Front Bumper`),
-    chance: () => 1,
-    banishes: true,
-  },
-  {
-    name: "Familiar Runaways",
-    available: () =>
-      runawayFamiliar !== $familiar`none` &&
-      have(runawayFamiliar) &&
-      availableFamiliarRunaways(5) > get("_banderRunaways"), // 5 from iFlail
-    prepare: (): void => {
-      bjornifyFamiliar($familiar`Gelatinous Cubeling`);
-      if (
-        floor((familiarWeight(runawayFamiliar) + weightAdjustment()) / 5) <= get("_banderRunaways")
-      ) {
-        throw `Trying to use Bandersnatch or Stomping Boots, but weight was overestimated.`;
-      }
-      if (runawayFamiliar === $familiar`Frumious Bandersnatch`) {
-        ensureEffect($effect`Ode to Booze`, 5);
-      }
+    {
+      name: "Bowl Curveball",
+      available: () =>
+        have($item`cosmic bowling ball`) || get("cosmicBowlingBallReturnCombats") === 0,
+      do: new Macro().skill($skill`Bowl a Curveball`),
+      chance: () => 1,
+      banishes: true,
     },
-    equip: {
-      familiar: runawayFamiliar,
-      equip: [...familiarGear, $item`iFlail`],
+    {
+      name: "Spring Shoes",
+      available: () => have($item`spring shoes`) && !have($effect`Everything Looks Green`),
+      do: new Macro().skill($skill`Spring Away`),
+      chance: () => 1,
+      equip: $item`spring shoes`,
+      banishes: false,
     },
-    do: new Macro().runaway(),
-    chance: () => 1,
-    banishes: false,
-  },
-  {
-    name: "Familiar Runaways (with offhand)", // Use the potted plant as long as possible
-    available: () =>
-      runawayFamiliar !== $familiar`none` &&
-      have(runawayFamiliar) &&
-      availableFamiliarRunaways(10) > get("_banderRunaways"), // 10 from iFlails
-    prepare: (): void => {
-      bjornifyFamiliar($familiar`Gelatinous Cubeling`);
-      if (
-        floor((familiarWeight(runawayFamiliar) + weightAdjustment()) / 5) <= get("_banderRunaways")
-      ) {
-        throw `Trying to use last Bandersnatch or Stomping Boots, but weight was overestimated.`;
-      }
-      if (runawayFamiliar === $familiar`Frumious Bandersnatch`) {
-        ensureEffect($effect`Ode to Booze`, 5);
-      }
+    {
+      name: "Bandersnatch",
+      available: () =>
+        runawayFamiliarPlan.available &&
+        runawayFamiliarPlan.outfit.familiar === $familiar`Frumious Bandersnatch`,
+      equip: runawayFamiliarPlan.outfit,
+      do: new Macro().runaway(),
+      chance: () => 1,
+      effect: $effect`Ode to Booze`,
+      banishes: false,
     },
-    equip: {
-      familiar: runawayFamiliar,
-      equip: [...familiarGear, $item`iFlail`, $item`familiar scrapbook`],
+    {
+      name: "Stomping Boots",
+      available: () =>
+        runawayFamiliarPlan.available &&
+        runawayFamiliarPlan.outfit.familiar === $familiar`Pair of Stomping Boots`,
+      equip: runawayFamiliarPlan.outfit,
+      do: new Macro().runaway(),
+      chance: () => 1,
+      banishes: false,
     },
-    do: new Macro().runaway(),
-    chance: () => 1,
-    banishes: false,
-  },
-  {
-    name: "Blank-Out",
-    prepare: (): void => {
-      if (!have($item`glob of Blank-Out`)) {
-        if (!have($item`bottle of Blank-Out`)) {
-          buy(1, $item`bottle of Blank-Out`, 5 * runawayValue);
+    {
+      name: "Comma Chameleon",
+      prepare: (): void => {
+        const commaItem = commaItemFinder();
+
+        if (commaItem !== undefined && get("commaFamiliar") === null) {
+          useFamiliar($familiar`Comma Chameleon`);
+          visitUrl(`inv_equip.php?which=2&action=equip&whichitem=${toInt(commaItem)}&pwd`);
         }
-        use($item`bottle of Blank-Out`);
-      }
+      },
+      available: (): boolean => {
+        const commaItem = commaItemFinder();
+
+        if (
+          runawayFamiliarPlan.available &&
+          runawayFamiliarPlan.outfit.familiar === $familiar`Comma Chameleon` &&
+          (get("commaFamiliar") === $familiar`Frumious Bandersnatch` ||
+            get("commaFamiliar") === $familiar`Pair of Stomping Boots` ||
+            (commaItem !== undefined && have(commaItem)))
+        )
+          return true;
+        return false;
+      },
+      equip: runawayFamiliarPlan.outfit,
+      do: new Macro().runaway(),
+      chance: () => 1,
+      effect: $effect`Ode to Booze`,
+      banishes: false,
     },
-    available: () =>
-      have($item`glob of Blank-Out`) ||
-      (mallPrice($item`bottle of Blank-Out`) < 5 * runawayValue && !get("_blankoutUsed")),
-    do: new Macro().tryItem($item`glob of Blank-Out`),
-    chance: () => 1,
-    banishes: false,
-  },
-  {
-    name: "GAP",
-    available: () => have($item`Greatest American Pants`),
-    equip: $item`Greatest American Pants`,
-    do: new Macro().runaway(),
-    chance: () => (get("_navelRunaways") < 3 ? 1 : 0.2),
-    banishes: false,
-  },
-  {
-    name: "Navel Ring",
-    available: () => have($item`navel ring of navel gazing`),
-    equip: $item`navel ring of navel gazing`,
-    do: new Macro().runaway(),
-    chance: () => (get("_navelRunaways") < 3 ? 1 : 0.2),
-    banishes: false,
-  },
-  {
-    name: "Peppermint Parasol",
-    available: () =>
-      have($item`peppermint parasol`) ||
-      mallPrice($item`peppermint parasol`) < 10 * get("valueOfAdventure"),
-    prepare: () => {
-      if (have($item`peppermint parasol`)) return;
-      if (itemAmount($item`peppermint sprout`) >= 5) {
-        retrieveItem($item`peppermint parasol`);
-      } else if (mallPrice($item`peppermint parasol`) < 5 * mallPrice($item`peppermint sprout`)) {
-        buy($item`peppermint parasol`, 1, mallPrice($item`peppermint parasol`));
-      } else {
-        buy(
-          $item`peppermint sprout`,
-          5 - itemAmount($item`peppermint sprout`),
-          mallPrice($item`peppermint sprout`)
-        );
-        retrieveItem($item`peppermint parasol`);
-      }
+    {
+      name: "Asdon Martin",
+      available: (): boolean => {
+        if (!asdonFualable(50)) return false;
+        // The boss bat minions are not banishable, which breaks the tracking
+        if (location === $location`The Boss Bat's Lair`) return false;
+        const banishes = get("banishedMonsters").split(":");
+        const bumperIndex = banishes
+          .map((string) => string.toLowerCase())
+          .indexOf("spring-loaded front bumper");
+        if (bumperIndex === -1) return true;
+        return myTurncount() - parseInt(banishes[bumperIndex + 1]) > 30;
+      },
+      prepare: () => asdonFillTo(50),
+      do: new Macro().skill($skill`Asdon Martin: Spring-Loaded Front Bumper`),
+      chance: () => 1,
+      banishes: true,
     },
-    do: new Macro().item($item`peppermint parasol`),
-    chance: () => (get("_navelRunaways") < 3 ? 1 : 0.2),
-    banishes: false,
-  },
+    {
+      name: "GAP",
+      available: () => have($item`Greatest American Pants`),
+      equip: $item`Greatest American Pants`,
+      do: new Macro().runaway(),
+      chance: () => (get("_navelRunaways") < 3 ? 1 : 0.2),
+      banishes: false,
+    },
+    {
+      name: "Navel Ring",
+      available: () => have($item`navel ring of navel gazing`),
+      equip: $item`navel ring of navel gazing`,
+      do: new Macro().runaway(),
+      chance: () => (get("_navelRunaways") < 3 ? 1 : 0.2),
+      banishes: false,
+    },
+    {
+      name: "Peppermint Parasol",
+      available: () => have($item`peppermint parasol`) && get("_navelRunaways") < 9,
+      do: new Macro().item($item`peppermint parasol`),
+      chance: () => (get("_navelRunaways") < 3 ? 1 : 0.2),
+      banishes: false,
+    },
+  ];
+}
+
+interface RunawayFamiliarSpec {
+  available: boolean;
+  outfit: OutfitSpec;
+}
+
+type FamweightOption = {
+  thing: Item;
+  modes?: Partial<Modes>;
+};
+
+const famweightOptions: FamweightOption[] = [
+  // Fam equip
+  { thing: $item`amulet coin` },
+  { thing: $item`astral pet sweater` },
+  { thing: $item`tiny stillsuit` },
+  // Hats
+  { thing: $item`Daylight Shavings Helmet` },
+  // Hands
+  { thing: $item`Fourth of May Cosplay Saber` },
+  { thing: $item`iFlail` },
+  { thing: $item`familiar scrapbook` },
+  // Accessories
+  { thing: $item`Brutal brogues` },
+  { thing: $item`hewn moon-rune spoon` },
+  { thing: $item`Beach Comb` },
 ];
+
+function planRunawayFamiliar(): RunawayFamiliarSpec {
+  const bestFamiliar = $familiars`Frumious Bandersnatch, Pair of Stomping Boots`.find((f) =>
+    have(f)
+  );
+  const altFamiliar =
+    have($familiar`Comma Chameleon`) &&
+    (getProperty("commaFamiliar") === "Frumious Bandersnatch" ||
+      getProperty("commaFamiliar") === "Pair of Stomping Boots" ||
+      getProperty("_commaRunDone"));
+
+  const chosenFamiliar =
+    bestFamiliar ?? (altFamiliar === true ? $familiar`Comma Chameleon` : false);
+
+  if (chosenFamiliar) {
+    const goalWeight = 5 * (1 + get("_banderRunaways"));
+    let attainableWeight = familiarWeight(chosenFamiliar);
+
+    // Include passive skills
+    if (have($skill`Crimbo Training: Concierge`)) attainableWeight += 5;
+    if (have($skill`Amphibian Sympathy`)) attainableWeight += 1;
+
+    // Include active effects
+    for (const effect of getActiveEffects())
+      attainableWeight += numericModifier(effect, "Familiar Weight");
+
+    // Include as much equipment as needed
+    const outfit = new Outfit();
+    outfit.equip(chosenFamiliar);
+    for (const option of famweightOptions) {
+      if (attainableWeight >= goalWeight) break;
+      if (outfit.equip(option.thing)) {
+        attainableWeight += numericModifier(option.thing, "Familiar Weight");
+      }
+    }
+
+    return {
+      outfit: outfit.spec(),
+      available: attainableWeight >= goalWeight,
+    };
+  }
+  return {
+    available: false,
+    outfit: {},
+  };
+}
 
 export interface FreekillSource extends CombatResource {
   do: Item | Skill;
@@ -546,8 +612,244 @@ export const freekillSources: FreekillSource[] = [
   },
   {
     name: "Asdon Martin: Missile Launcher",
-    available: () => AsdonMartin.installed() && !get("_missileLauncherUsed"),
-    prepare: () => AsdonMartin.fillTo(100),
+    available: () => asdonFualable(100) && !get("_missileLauncherUsed"),
+    prepare: () => asdonFillTo(100),
     do: $skill`Asdon Martin: Missile Launcher`,
+  },
+  {
+    name: "Shadow Brick",
+    available: () => have($item`shadow brick`) && get("_shadowBricksUsed") < 13,
+    do: $item`shadow brick`,
+  },
+  {
+    name: "Jurassic Parka",
+    available: () =>
+      have($skill`Torso Awareness`) &&
+      have($item`Jurassic Parka`) &&
+      !have($effect`Everything Looks Yellow`),
+    equip: { equip: $items`Jurassic Parka`, modes: { parka: "dilophosaur" } },
+    do: $skill`Spit jurassic acid`,
+  },
+];
+
+/**
+ * Actually fuel the asdon to the required amount.
+ */
+export function asdonFillTo(amount: number): boolean {
+  if (getWorkshed() !== $item`Asdon Martin keyfob (on ring)`) return false;
+
+  const remaining = amount - getFuel();
+  const count = Math.ceil(remaining / 5) + 1; // 5 is minimum adv gain from loaf of soda bread, +1 buffer
+  if (!have($item`bugbear bungguard`) || !have($item`bugbear beanie`)) {
+    // Prepare enough wad of dough from all-purpose flower
+    // We must do this ourselves since retrieveItem($item`loaf of soda bread`)
+    // in libram will not consider all-purpose flower
+    if (itemAmount($item`wad of dough`) < count) {
+      buy($item`all-purpose flower`);
+      use($item`all-purpose flower`);
+    }
+  }
+
+  retrieveItem(count, $item`loaf of soda bread`);
+  visitUrl(
+    `campground.php?action=fuelconvertor&pwd&qty=${count}&iid=${toInt(
+      $item`loaf of soda bread`
+    )}&go=Convert%21`
+  );
+  if (getFuel() < amount) {
+    throw new Error("Soda bread did not generate enough fuel");
+  }
+  return true;
+}
+
+/**
+ * Return true if we can possibly fuel the asdon to the required amount.
+ */
+export function asdonFualable(amount: number): boolean {
+  if (!AsdonMartin.installed()) return false;
+  if (!have($item`forged identification documents`) && step("questL11Black") < 4) return false; // Save early
+  if (amount <= getFuel()) return true;
+
+  // Use wad of dough with the bugbear outfit
+  if (have($item`bugbear bungguard`) && have($item`bugbear beanie`)) {
+    return myMeat() >= (amount - getFuel()) * 24 + 1000; // Save 1k meat as buffer
+  }
+
+  // Use all-purpose flower if we have enough ascensions
+  if (myAscensions() >= 10 && (have($item`bitchin' meatcar`) || have($item`Desert Bus pass`))) {
+    return myMeat() >= 3000 + (amount - getFuel()) * 14; // 2k for all-purpose flower + save 1k meat as buffer + soda water
+  }
+
+  return false;
+}
+
+/**
+ * Return true if we have all of our final latte ingredients, but they are not in the latte.
+ */
+export function shouldFinishLatte(): boolean {
+  if (!have($item`latte lovers member's mug`)) return false;
+  if (myTurncount() >= 1000) return false;
+
+  // Check that we have all the proper ingredients
+  for (const ingredient of ["wing", "cajun", "vitamins"])
+    if (!get("latteUnlocks").includes(ingredient)) return false;
+  // Check that the latte is not already finished
+  return !["Meat Drop: 40", "Combat Rate: 10", "Experience (familiar): 3"].every((modifier) =>
+    get("latteModifier").includes(modifier)
+  );
+}
+
+/**
+ * Refill the latte, using as many final ingredients as possible.
+ */
+export function refillLatte(): void {
+  if (!get("_latteBanishUsed")) return;
+  const modifiers = [];
+  if (get("latteUnlocks").includes("wing")) modifiers.push("wing");
+  if (get("latteUnlocks").includes("cajun")) modifiers.push("cajun");
+  if (get("latteUnlocks").includes("vitamins")) modifiers.push("vitamins");
+  modifiers.push("cinnamon", "pumpkin", "vanilla"); // Always unlocked
+  cliExecute(`latte refill ${modifiers.slice(0, 3).join(" ")}`);
+}
+
+export type YellowRaySource = CombatResource;
+export const yellowRaySources: YellowRaySource[] = [
+  {
+    name: "Jurassic Parka",
+    available: () => have($skill`Torso Awareness`) && have($item`Jurassic Parka`),
+    equip: { equip: $items`Jurassic Parka`, modes: { parka: "dilophosaur" } },
+    do: $skill`Spit jurassic acid`,
+  },
+  {
+    name: "Yellow Rocket",
+    available: () => myMeat() >= 250 && have($item`Clan VIP Lounge key`),
+    prepare: () => retrieveItem($item`yellow rocket`),
+    do: $item`yellow rocket`,
+  },
+  {
+    name: "Retro Superhero Cape",
+    available: () => have($item`unwrapped knock-off retro superhero cape`),
+    equip: {
+      equip: $items`unwrapped knock-off retro superhero cape`,
+      modes: { retrocape: ["heck", "kiss"] },
+    },
+    do: $skill`Unleash the Devil's Kiss`,
+  },
+];
+
+export function yellowRayPossible(): boolean {
+  if (have($effect`Everything Looks Yellow`)) return false;
+  return yellowRaySources.find((s) => s.available()) !== undefined;
+}
+
+export type ForceItemSource = CombatResource;
+export const forceItemSources: ForceItemSource[] = [
+  {
+    name: "Saber",
+    available: () => have($item`Fourth of May Cosplay Saber`) && get("_saberForceUses") < 5,
+    prepare: () => set("choiceAdventure1387", 3),
+    equip: $item`Fourth of May Cosplay Saber`,
+    do: $skill`Use the Force`,
+  },
+  {
+    name: "Envy",
+    available: () => have($skill`Emotionally Chipped`) && get("_feelEnvyUsed") < 3,
+    do: Macro.skill($skill`Feel Envy`).step(killMacro()),
+  },
+];
+
+export function forceItemPossible(): boolean {
+  return yellowRayPossible() || forceItemSources.find((s) => s.available()) !== undefined;
+}
+
+export type ForceNCSorce = CombatResource & { do: Macro };
+export const forceNCSources: ForceNCSorce[] = [
+  {
+    name: "Parka",
+    available: () =>
+      have($skill`Torso Awareness`) &&
+      have($item`Jurassic Parka`) &&
+      get("_spikolodonSpikeUses") + args.minor.saveparka < 5,
+    equip: { equip: $items`Jurassic Parka`, modes: { parka: "spikolodon" } },
+    do: Macro.skill($skill`Launch spikolodon spikes`),
+  },
+  {
+    name: "McHugeLarge",
+    available: () => have($item`McHugeLarge left ski`) && get("_mcHugeLargeAvalancheUses", 0) < 3,
+    equip: [
+      { equip: $items`McHugeLarge left ski, designer sweatpants` },
+      { equip: $items`McHugeLarge left ski` },
+    ],
+    do: Macro.trySkill($skill`Summon Love Gnats`)
+      .externalIf(!get("lovebugsUnlocked"), Macro.trySkill($skill`Sweat Flood`))
+      .skill($skill`McHugeLarge Avalanche`),
+  },
+];
+
+export function forceNCPossible(): boolean {
+  return forceNCSources.find((s) => s.available()) !== undefined;
+}
+
+type ForceNCSource = {
+  available: () => boolean;
+  do: () => void;
+};
+
+const tuba = $item`Apriling band tuba`;
+
+export const noncombatForceNCSources: ForceNCSource[] = [
+  {
+    available: () => (AprilingBandHelmet.canJoinSection() || have(tuba)) && tuba.dailyusesleft > 0,
+    do: () => AprilingBandHelmet.play(tuba, true),
+  },
+  {
+    available: () => CinchoDeMayo.currentCinch() >= 60,
+    do: () => useSkill($skill`Cincho: Fiesta Exit`),
+  },
+];
+
+export function tryForceNC(): boolean {
+  if (get("noncombatForcerActive")) return true;
+  noncombatForceNCSources.find((source) => source.available())?.do();
+  return get("noncombatForcerActive");
+}
+
+export function tryPlayApriling(modifier: string): void {
+  if (!AprilingBandHelmet.have()) return;
+
+  if (modifier.includes("+combat")) {
+    AprilingBandHelmet.conduct("Apriling Band Battle Cadence");
+  }
+
+  if (modifier.includes("-combat")) {
+    AprilingBandHelmet.conduct("Apriling Band Patrol Beat");
+  }
+
+  if (modifier.includes("food") || modifier.includes("booze")) {
+    AprilingBandHelmet.conduct("Apriling Band Celebration Bop");
+  }
+}
+
+export type BackupTarget = {
+  monster: Monster;
+  completed: () => boolean;
+  outfit?: OutfitSpec | (() => OutfitSpec);
+  limit_tries: number;
+};
+export const backupTargets: BackupTarget[] = [
+  {
+    monster: $monster`Camel's Toe`,
+    completed: () =>
+      (itemAmount($item`star`) >= 8 && itemAmount($item`line`) >= 7) ||
+      have($item`Richard's star key`) ||
+      get("nsTowerDoorKeysUsed").includes("Richard's star key") ||
+      args.minor.skipbackups,
+    outfit: { modifier: "item" },
+    limit_tries: 3,
+  },
+  {
+    monster: $monster`Eldritch Tentacle`,
+    completed: () => args.minor.skipbackups,
+    limit_tries: 11,
   },
 ];

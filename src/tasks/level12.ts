@@ -1,17 +1,20 @@
 import {
-  availableAmount,
   cliExecute,
-  council,
-  create,
+  effectModifier,
   equippedAmount,
-  Item,
+  haveEquipped,
   itemAmount,
-  mallPrice,
-  myLevel,
+  myBasestat,
+  myHp,
+  myMaxhp,
+  myTurncount,
+  restoreHp,
+  sell,
   use,
   visitUrl,
 } from "kolmafia";
 import {
+  $coinmaster,
   $effect,
   $effects,
   $familiar,
@@ -21,67 +24,41 @@ import {
   $monster,
   $monsters,
   $skill,
+  $stat,
+  AutumnAton,
   ensureEffect,
   get,
   have,
   Macro,
   set,
+  uneffect,
 } from "libram";
-import { Quest, Task } from "../engine/task";
+import { Priority, Quest, Task } from "../engine/task";
+import { Guards, OutfitSpec, step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
 import { CombatStrategy } from "../engine/combat";
-import { OutfitSpec, step } from "grimoire-kolmafia";
-import { args } from "../main";
-import { debug } from "../lib";
-
-function ensureFluffers(flufferCount: number): void {
-  // From bean-casual
-  while (availableAmount($item`stuffing fluffer`) < flufferCount) {
-    if (itemAmount($item`cashew`) >= 3) {
-      create(1, $item`stuffing fluffer`);
-      continue;
-    }
-    const neededFluffers = flufferCount - availableAmount($item`stuffing fluffer`);
-    const stuffingFlufferSources: [Item, number][] = [
-      [$item`cashew`, 3],
-      [$item`stuffing fluffer`, 1],
-      [$item`cornucopia`, (1 / 3.5) * 3],
-    ];
-    stuffingFlufferSources.sort(
-      ([item1, mult1], [item2, mult2]) => mallPrice(item1) * mult1 - mallPrice(item2) * mult2
-    );
-    const [stuffingFlufferSource, sourceMultiplier] = stuffingFlufferSources[0];
-
-    const neededOfSource = Math.ceil(neededFluffers * sourceMultiplier);
-    cliExecute(`acquire ${neededOfSource} ${stuffingFlufferSource}`);
-    if (itemAmount(stuffingFlufferSource) < neededOfSource) {
-      throw `Unable to acquire ${stuffingFlufferSource}; maybe raising your pricing limit will help?`;
-    }
-    if (stuffingFlufferSource === $item`cornucopia`) {
-      use(neededOfSource, $item`cornucopia`);
-    }
-    if (stuffingFlufferSource !== $item`stuffing fluffer`) {
-      create(
-        clamp(Math.floor(availableAmount($item`cashew`) / 3), 0, neededFluffers),
-        $item`stuffing fluffer`
-      );
-    }
-  }
-}
-
-function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(n, max));
-}
+import { atLevel, debug } from "../lib";
+import { forceItemPossible, yellowRayPossible } from "../engine/resources";
+import { args } from "../args";
+import { customRestoreMp, fillHp } from "../engine/moods";
 
 export function flyersDone(): boolean {
   return get("flyeredML") >= 10000;
 }
 
+const warHeroes = [
+  $monster`C.A.R.N.I.V.O.R.E. Operative`,
+  $monster`Glass of Orange Juice`,
+  $monster`Neil`,
+  $monster`Slow Talkin' Elliot`,
+  $monster`Zim Merman`,
+];
+
 const Flyers: Task[] = [
   {
     name: "Flyers Start",
     after: ["Enrage"],
-    completed: () =>
-      have($item`rock band flyers`) || get("sidequestArenaCompleted") !== "none" || args.fluffers,
+    completed: () => have($item`rock band flyers`) || get("sidequestArenaCompleted") !== "none",
     outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
     do: (): void => {
       visitUrl("bigisland.php?place=concert&pwd");
@@ -92,9 +69,9 @@ const Flyers: Task[] = [
   {
     name: "Flyers End",
     after: ["Flyers Start"],
-    priority: () => true,
+    priority: () => Priorities.Free,
     ready: () => flyersDone(), // Buffer for mafia tracking
-    completed: () => get("sidequestArenaCompleted") !== "none" || args.fluffers,
+    completed: () => get("sidequestArenaCompleted") !== "none",
     outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
     do: (): void => {
       visitUrl("bigisland.php?place=concert&pwd");
@@ -102,16 +79,13 @@ const Flyers: Task[] = [
       if (have($item`rock band flyers`)) {
         debug("Mafia tracking was incorrect for rock band flyers; continuing to flyer...");
         set(
-          "_loopcasual_flyeredML_buffer",
-          get("_loopcasual_flyeredML_buffer", 0) + (get("flyeredML") - 9900)
+          "_loopsmol_flyeredML_buffer",
+          get("_loopsmol_flyeredML_buffer", 0) + (get("flyeredML") - 9900)
         );
         set("flyeredML", 9900);
-      } else if (get("_loopcasual_flyeredML_buffer", 0) > 0) {
-        debug(
-          `Mafia tracking was incorrect for rock band flyers; quest completed at ${
-            get("flyeredML") + get("_loopcasual_flyeredML_buffer", 0)
-          }`
-        );
+      } else if (get("_loopsmol_flyeredML_buffer", 0) > 0) {
+        const real = get("flyeredML") + get("_loopsmol_flyeredML_buffer", 0);
+        debug(`Mafia tracking was incorrect for rock band flyers; quest completed at ${real}`);
       }
     },
     freeaction: true,
@@ -121,18 +95,27 @@ const Flyers: Task[] = [
 
 const Lighthouse: Task[] = [
   // Saber into more lobsterfrogmen
+  // Or backup into the Boss Bat's lair
   {
     name: "Lighthouse",
     after: ["Enrage"],
+    ready: () => step("questL04Bat") >= 3 || have($item`Fourth of May Cosplay Saber`),
     completed: () =>
       itemAmount($item`barrel of gunpowder`) >= 5 ||
       get("sidequestLighthouseCompleted") !== "none" ||
-      !have($item`Fourth of May Cosplay Saber`) ||
-      get("hasAutumnaton") ||
-      args.fluffers,
+      !have($item`backup camera`) ||
+      !have($item`Fourth of May Cosplay Saber`),
+    priority: (): Priority => {
+      if (AutumnAton.have()) {
+        if ($location`Sonofa Beach`.turnsSpent === 0) return Priorities.GoodAutumnaton;
+        else if (myTurncount() < 400) return Priorities.BadAutumnaton;
+      }
+      return Priorities.None;
+    },
     do: $location`Sonofa Beach`,
     outfit: (): OutfitSpec => {
-      if (!have($item`Fourth of May Cosplay Saber`)) return { modifier: "+combat" };
+      if (AutumnAton.have() || !have($item`Fourth of May Cosplay Saber`))
+        return { modifier: "+combat" };
 
       // Look for the first lobsterfrogman
       if (
@@ -153,6 +136,7 @@ const Lighthouse: Task[] = [
       .macro(() => {
         if (
           equippedAmount($item`Fourth of May Cosplay Saber`) > 0 &&
+          !AutumnAton.have() &&
           get("_saberForceUses") < 5 &&
           (get("_saberForceMonster") !== $monster`lobsterfrogman` ||
             get("_saberForceMonsterCount") === 0 ||
@@ -163,27 +147,44 @@ const Lighthouse: Task[] = [
         return new Macro();
       })
       .kill($monster`lobsterfrogman`),
+    orbtargets: () => undefined,
+    expectbeatenup: () => get("lastEncounter") === "Zerg Rush",
     choices: { 1387: 2 },
-    limit: { tries: 20 },
+    limit: {
+      tries: 20,
+      guard: Guards.create(
+        () => itemAmount($item`figurine of a sleek seal`),
+        (sleek) =>
+          !AutumnAton.have() ||
+          $location`Sonofa Beach`.turnsSpent > 0 ||
+          ($location`Sonofa Beach`.turnsSpent === 0 &&
+            itemAmount($item`figurine of a sleek seal`) === sleek + 3)
+      ),
+    },
   },
   {
     name: "Lighthouse Basic",
     after: ["Enrage", "Lighthouse"],
+    priority: (): Priority => {
+      if (AutumnAton.have()) {
+        if ($location`Sonofa Beach`.turnsSpent === 0) return Priorities.GoodAutumnaton;
+        else return Priorities.BadAutumnaton;
+      }
+      return Priorities.None;
+    },
     completed: () =>
-      itemAmount($item`barrel of gunpowder`) >= 5 ||
-      get("sidequestLighthouseCompleted") !== "none" ||
-      get("hasAutumnaton") ||
-      args.fluffers,
+      itemAmount($item`barrel of gunpowder`) >= 5 || get("sidequestLighthouseCompleted") !== "none",
     do: $location`Sonofa Beach`,
     outfit: { modifier: "+combat" },
     combat: new CombatStrategy().kill($monster`lobsterfrogman`),
+    orbtargets: () => undefined,
+    expectbeatenup: () => get("lastEncounter") === "Zerg Rush",
     limit: { soft: 40 },
   },
   {
     name: "Lighthouse End",
     after: ["Lighthouse Basic"],
-    ready: () => itemAmount($item`barrel of gunpowder`) >= 5,
-    completed: () => get("sidequestLighthouseCompleted") !== "none" || args.fluffers,
+    completed: () => get("sidequestLighthouseCompleted") !== "none",
     outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
     do: (): void => {
       visitUrl("bigisland.php?place=lighthouse&action=pyro&pwd");
@@ -197,10 +198,7 @@ const Junkyard: Task[] = [
   {
     name: "Junkyard Start",
     after: ["Enrage"],
-    completed: () =>
-      have($item`molybdenum magnet`) ||
-      get("sidequestJunkyardCompleted") !== "none" ||
-      args.fluffers,
+    completed: () => have($item`molybdenum magnet`) || get("sidequestJunkyardCompleted") !== "none",
     outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
     do: (): void => {
       visitUrl("bigisland.php?action=junkman&pwd");
@@ -211,16 +209,23 @@ const Junkyard: Task[] = [
   {
     name: "Junkyard Hammer",
     after: ["Junkyard Start"],
-    completed: () =>
-      have($item`molybdenum hammer`) ||
-      get("sidequestJunkyardCompleted") !== "none" ||
-      args.fluffers,
+    prepare: (): void => {
+      fillHp();
+      customRestoreMp(50);
+    },
+    completed: () => have($item`molybdenum hammer`) || get("sidequestJunkyardCompleted") !== "none",
     acquire: [{ item: $item`seal tooth` }],
-    outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+    outfit: {
+      equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+      avoid: $items`carnivorous potted plant`,
+    },
     do: $location`Next to that Barrel with Something Burning in it`,
+    orbtargets: () => $monsters`batwinged gremlin, batwinged gremlin (tool)`,
     combat: new CombatStrategy()
       .macro(
         new Macro()
+          .trySkill($skill`Curse of Weaksauce`)
+          .trySkill($skill`Micrometeorite`)
           .while_(
             "!match whips out && !times 28 && !hpbelow 30",
             new Macro().item($item`seal tooth`)
@@ -228,23 +233,33 @@ const Junkyard: Task[] = [
           .if_("match whips out", new Macro().item(`molybdenum magnet`)),
         $monster`batwinged gremlin (tool)`
       )
-      .banish($monsters`A.M.C. gremlin, batwinged gremlin, vegetable gremlin`)
-      .kill($monster`batwinged gremlin (tool)`),
+      .banish($monster`A.M.C. gremlin`)
+      .kill($monster`batwinged gremlin (tool)`)
+      .banish($monsters`batwinged gremlin, vegetable gremlin`),
+    nofightingfamiliars: true,
     limit: { soft: 15 },
   },
   {
     name: "Junkyard Wrench",
     after: ["Junkyard Start"],
+    prepare: (): void => {
+      fillHp();
+      customRestoreMp(50);
+    },
     completed: () =>
-      have($item`molybdenum crescent wrench`) ||
-      get("sidequestJunkyardCompleted") !== "none" ||
-      args.fluffers,
+      have($item`molybdenum crescent wrench`) || get("sidequestJunkyardCompleted") !== "none",
     acquire: [{ item: $item`seal tooth` }],
-    outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+    outfit: {
+      equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+      avoid: $items`carnivorous potted plant`,
+    },
     do: $location`Over Where the Old Tires Are`,
+    orbtargets: () => $monsters`erudite gremlin, erudite gremlin (tool)`,
     combat: new CombatStrategy()
       .macro(
         new Macro()
+          .trySkill($skill`Curse of Weaksauce`)
+          .trySkill($skill`Micrometeorite`)
           .while_(
             "!match whips out && !times 28 && !hpbelow 30",
             new Macro().item($item`seal tooth`)
@@ -252,23 +267,32 @@ const Junkyard: Task[] = [
           .if_("match whips out", new Macro().item(`molybdenum magnet`)),
         $monster`erudite gremlin (tool)`
       )
-      .banish($monsters`A.M.C. gremlin, erudite gremlin, spider gremlin`)
-      .kill($monster`erudite gremlin (tool)`),
+      .banish($monster`A.M.C. gremlin`)
+      .kill($monster`erudite gremlin (tool)`)
+      .banish($monsters`erudite gremlin, spider gremlin`),
+    nofightingfamiliars: true,
     limit: { soft: 15 },
   },
   {
     name: "Junkyard Pliers",
     after: ["Junkyard Start"],
     acquire: [{ item: $item`seal tooth` }],
-    completed: () =>
-      have($item`molybdenum pliers`) ||
-      get("sidequestJunkyardCompleted") !== "none" ||
-      args.fluffers,
-    outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+    prepare: (): void => {
+      fillHp();
+      customRestoreMp(50);
+    },
+    completed: () => have($item`molybdenum pliers`) || get("sidequestJunkyardCompleted") !== "none",
+    outfit: {
+      equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+      avoid: $items`carnivorous potted plant`,
+    },
     do: $location`Near an Abandoned Refrigerator`,
+    orbtargets: () => $monsters`spider gremlin, spider gremlin (tool)`,
     combat: new CombatStrategy()
       .macro(
         new Macro()
+          .trySkill($skill`Curse of Weaksauce`)
+          .trySkill($skill`Micrometeorite`)
           .while_(
             "!match whips out && !times 28 && !hpbelow 30",
             new Macro().item($item`seal tooth`)
@@ -276,23 +300,33 @@ const Junkyard: Task[] = [
           .if_("match whips out", new Macro().item(`molybdenum magnet`)),
         $monster`spider gremlin (tool)`
       )
-      .banish($monsters`A.M.C. gremlin, batwinged gremlin, spider gremlin`)
-      .kill($monster`spider gremlin (tool)`),
+      .banish($monster`A.M.C. gremlin`)
+      .kill($monster`spider gremlin (tool)`)
+      .banish($monsters`batwinged gremlin, spider gremlin`),
+    nofightingfamiliars: true,
     limit: { soft: 15 },
   },
   {
     name: "Junkyard Screwdriver",
     after: ["Junkyard Start"],
+    prepare: (): void => {
+      fillHp();
+      customRestoreMp(50);
+    },
     completed: () =>
-      have($item`molybdenum screwdriver`) ||
-      get("sidequestJunkyardCompleted") !== "none" ||
-      args.fluffers,
+      have($item`molybdenum screwdriver`) || get("sidequestJunkyardCompleted") !== "none",
     acquire: [{ item: $item`seal tooth` }],
-    outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+    outfit: {
+      equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+      avoid: $items`carnivorous potted plant`,
+    },
     do: $location`Out by that Rusted-Out Car`,
+    orbtargets: () => $monsters`vegetable gremlin, vegetable gremlin (tool)`,
     combat: new CombatStrategy()
       .macro(
         new Macro()
+          .trySkill($skill`Curse of Weaksauce`)
+          .trySkill($skill`Micrometeorite`)
           .while_(
             "!match whips out && !times 28 && !hpbelow 30",
             new Macro().item($item`seal tooth`)
@@ -300,15 +334,19 @@ const Junkyard: Task[] = [
           .if_("match whips out", new Macro().item(`molybdenum magnet`)),
         $monster`vegetable gremlin (tool)`
       )
-      .banish($monsters`A.M.C. gremlin, erudite gremlin, vegetable gremlin`)
-      .kill($monster`vegetable gremlin (tool)`),
+      .banish($monster`A.M.C. gremlin`)
+      .kill($monster`vegetable gremlin (tool)`)
+      .banish($monsters`erudite gremlin, vegetable gremlin`),
+    nofightingfamiliars: true,
     limit: { soft: 15 },
   },
   {
     name: "Junkyard End",
     after: ["Junkyard Hammer", "Junkyard Wrench", "Junkyard Pliers", "Junkyard Screwdriver"],
-    completed: () => get("sidequestJunkyardCompleted") !== "none" || args.fluffers,
-    outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+    completed: () => get("sidequestJunkyardCompleted") !== "none",
+    outfit: {
+      equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+    },
     do: (): void => {
       visitUrl("bigisland.php?action=junkman&pwd");
     },
@@ -329,23 +367,27 @@ const Orchard: Task[] = [
       have($item`filthworm royal guard scent gland`) ||
       have($effect`Filthworm Guard Stench`) ||
       have($item`heart of the filthworm queen`) ||
-      get("sidequestOrchardCompleted") !== "none" ||
-      args.fluffers,
+      get("sidequestOrchardCompleted") !== "none",
     do: $location`The Hatching Chamber`,
     outfit: () => {
-      if (have($item`industrial fire extinguisher`) && get("_fireExtinguisherCharge") >= 10)
-        return { equip: $items`industrial fire extinguisher` };
-      if (have($item`Fourth of May Cosplay Saber`) && get("_saberForceUses") < 5)
-        return { equip: $items`Fourth of May Cosplay Saber` };
+      if (yellowRayPossible())
+        return {
+          familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+        };
       else return { modifier: "item" };
     },
     combat: new CombatStrategy()
-      .macro(
-        Macro.trySkill($skill`Use the Force`).trySkill($skill`Fire Extinguisher: Polar Vortex`),
-        $monster`larval filthworm`
-      )
-      .kill(),
-    choices: { 1387: 3 },
+      .yellowRay($monster`larval filthworm`)
+      .startingMacro(Macro.trySkill($skill`Extract Jelly`))
+      .macro(() =>
+        Macro.externalIf(
+          have($skill`Emotionally Chipped`) &&
+            get("_feelEnvyUsed") < 3 &&
+            have($effect`Everything Looks Yellow`),
+          Macro.trySkill($skill`Feel Envy`),
+          Macro.trySkill($skill`Fire Extinguisher: Polar Vortex`)
+        )
+      ),
     limit: { soft: 10 },
   },
   {
@@ -357,23 +399,31 @@ const Orchard: Task[] = [
       have($item`filthworm royal guard scent gland`) ||
       have($effect`Filthworm Guard Stench`) ||
       have($item`heart of the filthworm queen`) ||
-      get("sidequestOrchardCompleted") !== "none" ||
-      args.fluffers,
+      get("sidequestOrchardCompleted") !== "none",
     do: $location`The Feeding Chamber`,
     outfit: () => {
-      if (have($item`industrial fire extinguisher`) && get("_fireExtinguisherCharge") >= 10)
-        return { equip: $items`industrial fire extinguisher` };
-      if (have($item`Fourth of May Cosplay Saber`) && get("_saberForceUses") < 5)
-        return { equip: $items`Fourth of May Cosplay Saber` };
+      if (yellowRayPossible())
+        return {
+          familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+        };
+      else if (have($item`industrial fire extinguisher`) && get("_fireExtinguisherCharge") >= 10)
+        return {
+          equip: $items`industrial fire extinguisher`,
+        };
       else return { modifier: "item" };
     },
     combat: new CombatStrategy()
-      .macro(
-        Macro.trySkill($skill`Use the Force`).trySkill($skill`Fire Extinguisher: Polar Vortex`),
-        $monster`filthworm drone`
-      )
-      .kill(),
-    choices: { 1387: 3 },
+      .yellowRay($monster`filthworm drone`)
+      .startingMacro(Macro.trySkill($skill`Extract Jelly`))
+      .macro(() =>
+        Macro.externalIf(
+          have($skill`Emotionally Chipped`) &&
+            get("_feelEnvyUsed") < 3 &&
+            have($effect`Everything Looks Yellow`),
+          Macro.trySkill($skill`Feel Envy`),
+          Macro.trySkill($skill`Fire Extinguisher: Polar Vortex`)
+        )
+      ),
     effects: $effects`Filthworm Larva Stench`,
     limit: { soft: 10 },
   },
@@ -384,43 +434,53 @@ const Orchard: Task[] = [
       have($item`filthworm royal guard scent gland`) ||
       have($effect`Filthworm Guard Stench`) ||
       have($item`heart of the filthworm queen`) ||
-      get("sidequestOrchardCompleted") !== "none" ||
-      args.fluffers,
+      get("sidequestOrchardCompleted") !== "none",
     do: $location`The Royal Guard Chamber`,
     effects: $effects`Filthworm Drone Stench`,
     outfit: () => {
-      if (have($item`industrial fire extinguisher`) && get("_fireExtinguisherCharge") >= 10)
-        return { equip: $items`industrial fire extinguisher` };
-      if (have($item`Fourth of May Cosplay Saber`) && get("_saberForceUses") < 5)
-        return { equip: $items`Fourth of May Cosplay Saber` };
+      if (yellowRayPossible())
+        return {
+          familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+        };
+      else if (have($item`industrial fire extinguisher`) && get("_fireExtinguisherCharge") >= 10)
+        return {
+          equip: $items`industrial fire extinguisher`,
+        };
       else return { modifier: "item" };
     },
     combat: new CombatStrategy()
-      .macro(
-        Macro.trySkill($skill`Use the Force`).trySkill($skill`Fire Extinguisher: Polar Vortex`),
-        $monster`filthworm royal guard`
-      )
-      .kill(),
-    choices: { 1387: 3 },
+      .yellowRay($monster`filthworm royal guard`)
+      .startingMacro(Macro.trySkill($skill`Extract Jelly`))
+      .macro(() =>
+        Macro.externalIf(
+          have($skill`Emotionally Chipped`) &&
+            get("_feelEnvyUsed") < 3 &&
+            have($effect`Everything Looks Yellow`),
+          Macro.trySkill($skill`Feel Envy`),
+          Macro.trySkill($skill`Fire Extinguisher: Polar Vortex`)
+        )
+      ),
     limit: { soft: 10 },
   },
   {
     name: "Orchard Queen",
     after: ["Orchard Guard"],
     completed: () =>
-      have($item`heart of the filthworm queen`) ||
-      get("sidequestOrchardCompleted") !== "none" ||
-      args.fluffers,
+      have($item`heart of the filthworm queen`) || get("sidequestOrchardCompleted") !== "none",
     do: $location`The Filthworm Queen's Chamber`,
     effects: $effects`Filthworm Guard Stench`,
-    combat: new CombatStrategy().kill(),
+    outfit: () =>
+      <OutfitSpec>{
+        familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+      },
+    combat: new CombatStrategy().kill().macro(Macro.trySkill($skill`Extract Jelly`)),
     limit: { tries: 2 }, // allow wanderer
     boss: true,
   },
   {
     name: "Orchard Finish",
     after: ["Orchard Queen", "Open Orchard"],
-    completed: () => get("sidequestOrchardCompleted") !== "none" || args.fluffers,
+    completed: () => get("sidequestOrchardCompleted") !== "none",
     outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
     do: (): void => {
       visitUrl("bigisland.php?place=orchard&action=stand&pwd");
@@ -434,14 +494,31 @@ const Nuns: Task[] = [
   {
     name: "Nuns",
     after: ["Open Nuns"],
-    completed: () => get("sidequestNunsCompleted") !== "none" || args.fluffers,
-    priority: () => (have($effect`Winklered`) ? true : false),
+    completed: () => get("sidequestNunsCompleted") !== "none",
+    priority: () => (have($effect`Winklered`) ? Priorities.Effect : Priorities.None),
     prepare: () => {
       if (have($item`SongBoom™ BoomBox`) && get("boomBoxSong") !== "Total Eclipse of Your Meat")
         cliExecute("boombox meat");
       if (!get("concertVisited")) ensureEffect($effect`Winklered`);
+      $items`flapper fly, autumn dollar, pink candy heart`
+        .filter((i) => have(i, 2) && !have(effectModifier(i, "Effect")))
+        .forEach((i) => use(i));
+      if (have($item`pocket wish`) && !have($effect`Sinuses For Miles`)) {
+        cliExecute("genie effect sinuses for miles");
+      }
+      if (have($item`savings bond`)) ensureEffect($effect`Earning Interest`);
+      fillHp();
     },
     do: $location`The Themthar Hills`,
+    post: () => {
+      if (
+        get("sidequestNunsCompleted") !== "none" &&
+        have($effect`Friendly Chops`) &&
+        have($item`soft green echo eyedrop antidote`)
+      ) {
+        uneffect($effect`Friendly Chops`);
+      }
+    },
     outfit: () => {
       if (have($familiar`Trick-or-Treating Tot`) && have($item`li'l pirate costume`)) {
         return {
@@ -452,15 +529,20 @@ const Nuns: Task[] = [
       }
       return {
         modifier: "meat",
-        familiar: $familiar`Hobo Monkey`,
         equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin, amulet coin`, // Use amulet coin (if we have) to avoid using orb
       };
     },
     freecombat: true, // Do not equip cmg or carn plant
     combat: new CombatStrategy()
-      .macro(new Macro().trySkill($skill`Bowl Straight Up`).trySkill($skill`Sing Along`))
-      .kill(),
-    limit: { soft: 25 },
+      .macro(
+        new Macro()
+          .trySkill($skill`Micrometeorite`)
+          .trySkill($skill`Curse of Weaksauce`)
+          .trySkill($skill`Bowl Straight Up`)
+          .trySkill($skill`Sing Along`)
+      )
+      .killHard(),
+    limit: { soft: 30 },
     boss: true,
   },
 ];
@@ -470,47 +552,101 @@ export const WarQuest: Quest = {
   tasks: [
     {
       name: "Start",
-      after: ["Toot/Finish"],
-      ready: () => myLevel() >= 12,
+      after: [],
+      ready: () => atLevel(12) && councilSafe(),
       completed: () => step("questL12War") !== -1,
       do: () => visitUrl("council.php"),
       limit: { tries: 1 },
       freeaction: true,
     },
     {
-      name: "Enrage",
-      after: ["Start", "Misc/Unlock Island"],
-      acquire: [
-        { item: $item`beer helmet` },
-        { item: $item`distressed denim pants` },
-        { item: $item`bejeweled pledge pin` },
-      ],
-      completed: () => step("questL12War") >= 1,
-      outfit: {
-        equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
-        modifier: "-combat",
-      },
+      name: "Outfit Hippy",
+      after: ["Misc/Unlock Island"],
+      ready: () =>
+        get("skillLevel144") === 0 ||
+        atLevel(12) ||
+        get("_universeCalculated") >= get("skillLevel144"),
+      completed: () =>
+        (have($item`filthy corduroys`) && have($item`filthy knitted dread sack`)) ||
+        (have($item`beer helmet`) &&
+          have($item`distressed denim pants`) &&
+          have($item`bejeweled pledge pin`)),
       do: $location`Hippy Camp`,
-      choices: { 142: 3, 1433: 3 },
-      limit: { soft: 20 },
+      limit: { soft: 10 },
+      choices: () => {
+        return {
+          136: have($item`filthy corduroys`) ? 2 : 1,
+          137: have($item`filthy corduroys`) ? 1 : 2,
+        };
+      },
+      outfit: () => {
+        if (forceItemPossible())
+          return {
+            modifier: "+combat",
+            familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+          };
+        else
+          return {
+            modifier: "item",
+            // use goose for item instead of jellyfish
+          };
+      },
+      combat: new CombatStrategy().forceItems().macro(Macro.trySkill($skill`Extract Jelly`)),
     },
     {
-      name: "Fluffers",
-      after: ["Enrage"],
+      name: "Outfit Frat",
+      after: ["Start", "Outfit Hippy"],
       completed: () =>
-        get("hippiesDefeated") >= 1000 || get("fratboysDefeated") >= 1000 || !args.fluffers,
-      outfit: {
-        equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+        have($item`beer helmet`) &&
+        have($item`distressed denim pants`) &&
+        have($item`bejeweled pledge pin`),
+      do: $location`Frat House`,
+      limit: { soft: 10 },
+      choices: { 142: 3, 143: 3, 144: 3, 145: 1, 146: 3, 1433: 3 },
+      outfit: () => {
+        if (forceItemPossible())
+          return {
+            equip: $items`filthy corduroys, filthy knitted dread sack`,
+            modifier: "+combat",
+          };
+        else
+          return {
+            equip: $items`filthy corduroys, filthy knitted dread sack`,
+            modifier: "item",
+          };
       },
-      do: (): void => {
-        // const count = clamp((1000 - get("hippiesDefeated")) / 46, 0, 24);
-        while (get("hippiesDefeated") < 1000) {
-          ensureFluffers(1);
-          use($item`stuffing fluffer`);
-        }
+      combat: new CombatStrategy().forceItems(),
+    },
+    {
+      name: "Enrage",
+      after: ["Start", "Misc/Unlock Island", "Misc/Unlock Island Submarine", "Outfit Frat"],
+      ready: () => myBasestat($stat`mysticality`) >= 70,
+      completed: () => step("questL12War") >= 1,
+      prepare: () => {
+        // Restore a bit more HP than usual
+        if (myHp() < 80 && myHp() < myMaxhp()) restoreHp(myMaxhp() < 80 ? myMaxhp() : 80);
       },
-      limit: { tries: 1 },
-      freeaction: true,
+      outfit: () => {
+        const result = <OutfitSpec>{
+          // eslint-disable-next-line libram/verify-constants
+          equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+          familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+          modifier: "-combat",
+        };
+        if (!have($skill`Comprehensive Cartography`))
+          // eslint-disable-next-line libram/verify-constants
+          result.equip?.push($item`candy cane sword cane`);
+        return result;
+      },
+      combat: new CombatStrategy().macro(Macro.trySkill($skill`Extract Jelly`)),
+      do: $location`Wartime Hippy Camp (Frat Disguise)`,
+      choices: () => {
+        // eslint-disable-next-line libram/verify-constants
+        if (haveEquipped($item`candy cane sword cane`))
+          return { 139: 4, 140: 4, 141: 3, 142: 3, 143: 3, 144: 3, 145: 1, 146: 3, 1433: 3 };
+        else return { 139: 3, 140: 3, 141: 3, 142: 3, 143: 3, 144: 3, 145: 1, 146: 3, 1433: 3 };
+      },
+      limit: { soft: 20 },
     },
     ...Flyers,
     ...Lighthouse,
@@ -523,10 +659,41 @@ export const WarQuest: Quest = {
         { item: $item`distressed denim pants` },
         { item: $item`bejeweled pledge pin` },
       ],
-      completed: () => get("hippiesDefeated") >= 64 || args.fluffers,
-      outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+      completed: () => get("hippiesDefeated") >= 64,
+      outfit: () => {
+        const jelly = args.minor.jellies ? $familiar`Space Jellyfish` : undefined;
+        if (
+          have($item`Sheriff moustache`) &&
+          have($item`Sheriff badge`) &&
+          have($item`Sheriff pistol`) &&
+          get("_assertYourAuthorityCast", 0) < 3
+        ) {
+          return {
+            equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin, Sheriff moustache, Sheriff badge, Sheriff pistol`,
+            familiar:
+              !have($effect`Citizen of a Zone`) && have($familiar`Patriotic Eagle`)
+                ? $familiar`Patriotic Eagle`
+                : jelly,
+          };
+        }
+        return {
+          equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+          familiar:
+            !have($effect`Citizen of a Zone`) && have($familiar`Patriotic Eagle`)
+              ? $familiar`Patriotic Eagle`
+              : jelly,
+        };
+      },
       do: $location`The Battlefield (Frat Uniform)`,
-      combat: new CombatStrategy().kill(),
+      post: dimesForGarters,
+      combat: new CombatStrategy()
+        .killHard(warHeroes)
+        .kill()
+        .macro(
+          Macro.trySkill($skill`%fn, let's pledge allegiance to a Zone`)
+            .trySkill($skill`Extract Jelly`)
+            .trySkill($skill`Assert your Authority`)
+        ),
       limit: { tries: 10 },
     },
     ...Orchard,
@@ -538,10 +705,17 @@ export const WarQuest: Quest = {
         { item: $item`distressed denim pants` },
         { item: $item`bejeweled pledge pin` },
       ],
-      completed: () => get("hippiesDefeated") >= 192 || args.fluffers,
-      outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+      completed: () => get("hippiesDefeated") >= 192,
+      outfit: () =>
+        <OutfitSpec>{
+          equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+          familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+        },
       do: $location`The Battlefield (Frat Uniform)`,
-      combat: new CombatStrategy().kill(),
+      combat: new CombatStrategy()
+        .kill()
+        .killHard(warHeroes)
+        .macro(Macro.trySkill($skill`Extract Jelly`)),
       limit: { tries: 9 },
     },
     ...Nuns,
@@ -553,53 +727,70 @@ export const WarQuest: Quest = {
         { item: $item`distressed denim pants` },
         { item: $item`bejeweled pledge pin` },
       ],
-      completed: () => get("hippiesDefeated") >= 1000 || args.fluffers,
-      outfit: { equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin` },
+      completed: () => get("hippiesDefeated") >= 1000,
+      outfit: () => {
+        const result = <OutfitSpec>{
+          equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+        };
+        if (args.minor.jellies) {
+          result.familiar = $familiar`Space Jellyfish`;
+        }
+        return result;
+      },
       do: $location`The Battlefield (Frat Uniform)`,
-      combat: new CombatStrategy().kill(),
+      post: dimesForGarters,
+      combat: new CombatStrategy()
+        .kill()
+        .killHard(warHeroes)
+        .macro(Macro.trySkill($skill`Extract Jelly`)),
       limit: { tries: 30 },
     },
-    // Kill whichever side the fluffers finish off first
     {
       name: "Boss Hippie",
-      after: ["Fluffers", "Clear"],
+      after: ["Clear"],
       completed: () => step("questL12War") === 999,
-      ready: () => get("hippiesDefeated") >= 1000,
-      outfit: {
-        equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+      outfit: () =>
+        <OutfitSpec>{
+          equip: $items`beer helmet, distressed denim pants, bejeweled pledge pin`,
+          familiar: args.minor.jellies ? $familiar`Space Jellyfish` : undefined,
+        },
+      prepare: () => {
+        dimesForGarters();
+        fillHp();
       },
       do: (): void => {
         visitUrl("bigisland.php?place=camp&whichcamp=1&confirm7=1");
         visitUrl("bigisland.php?action=bossfight&pwd");
-        visitUrl("main.php");
       },
-      post: council,
-      boss: true,
-      combat: new CombatStrategy().killHard(),
+      combat: new CombatStrategy().killHard().macro(Macro.trySkill($skill`Extract Jelly`)),
       limit: { tries: 1 },
-    },
-    {
-      name: "Boss Frat",
-      after: ["Fluffers", "Clear"],
-      completed: () => step("questL12War") === 999,
-      ready: () => get("fratboysDefeated") >= 1000,
-      acquire: [
-        { item: $item`reinforced beaded headband` },
-        { item: $item`bullet-proof corduroys` },
-        { item: $item`round purple sunglasses` },
-      ],
-      outfit: {
-        equip: $items`reinforced beaded headband, bullet-proof corduroys, round purple sunglasses`,
-      },
-      do: (): void => {
-        visitUrl("bigisland.php?place=camp&whichcamp=2&confirm7=1");
-        visitUrl("bigisland.php?action=bossfight&pwd");
-        visitUrl("main.php");
-      },
-      post: council,
       boss: true,
-      combat: new CombatStrategy().killHard(),
-      limit: { tries: 1 },
     },
   ],
 };
+
+export function councilSafe(): boolean {
+  // Check if it is safe to visit the council without making the war outfit worse
+  // (It is harder to get the hippy outfit after the war starts)
+  return (
+    !atLevel(12) ||
+    (have($item`filthy corduroys`) && have($item`filthy knitted dread sack`)) ||
+    (have($item`beer helmet`) &&
+      have($item`distressed denim pants`) &&
+      have($item`bejeweled pledge pin`))
+  );
+}
+
+function dimesForGarters(): void {
+  if (myTurncount() >= 1000) return;
+  const to_sell = $items`pink clay bead, purple clay bead, green clay bead, communications windchimes, bullet-proof corduroys, round purple sunglasses, reinforced beaded headband`;
+  for (const it of to_sell) {
+    if (itemAmount(it) > 0) sell(it.buyer, itemAmount(it), it);
+  }
+
+  if (itemAmount($item`gauze garter`) < 20) {
+    if ($coinmaster`Quartersmaster`.availableTokens >= 2) cliExecute(`make * gauze garter`);
+  } else if (args.minor.warProfiteering)
+    if ($coinmaster`Quartersmaster`.availableTokens >= 5)
+      cliExecute("make * commemorative war stein");
+}

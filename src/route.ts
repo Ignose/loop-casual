@@ -1,114 +1,161 @@
-import { Task } from "./engine/task";
 import { orderByRoute } from "grimoire-kolmafia";
+import { Task } from "./engine/task";
+
+export const ROUTE_WAIT_TO_NCFORCE = 30;
 
 export const routing: string[] = [
-  "Diet/Numberology", // Numberology is always ready at the start of the day
-  "Diet/Sausage", // Eat magical sausages as soon as they are obtained
-  "Diet/Hourglass",
-
-  // Pickup items
-  "Misc/Short Cook",
-  "Misc/Floundry",
-  "Misc/Voting",
-  "Misc/Acquire Kgnee",
-  "Misc/Acquire FamEquip",
+  // Break pvp stone ASAP
+  "Misc/Break Stone",
+  "Pull/All",
 
   // Start with the basic leveling tasks
   "Toot/Finish",
-  "Leveling/Cloud Talk",
-  "Leveling/Daycare",
-  "Leveling/Bastille",
-  "Leveling/Leaflet",
-  "Leveling/Snojo",
-  "Leveling/Chateau",
 
-  // Then do the scaling leveling
-  "Leveling/LOV Tunnel",
-  "Leveling/Witchess",
-  "Leveling/God Lobster",
-  "Leveling/Machine Elf",
-  "Leveling/Neverending Party",
-  "Leveling/Sausage Fights",
-  "Diet/Consume",
-  "Misc/Protonic Ghost", // whenever ghosts are ready
+  // Get basic gear
+  "Misc/Workshed",
+  "Misc/Goose Exp",
+  "Misc/Acquire Birch Battery",
+  "Keys/Deck",
 
-  // Open up MacGuffin zones
-  "Macguffin/Diary",
-  "Macguffin/Desert", // charge camel, use voters
+  // Level up
+  "Misc/Cloud Talk",
+  "Summon/War Frat 151st Infantryman", // Summon before leaving level 1
+  "Misc/LOV Tunnel",
+  "Misc/Daycare",
+  "Misc/Bastille",
+  "Misc/Snojo",
 
-  // Line up noncombats
+  // Eat as soon as possible
+  "Diet/Eat",
+  "Diet/Drink",
+  "Diet/Numberology",
+
+  // Start quests when able
+  "Knob/Start",
+  "McLargeHuge/Trapper Request",
+
+  // Unlock island to start YRing
+  "Misc/Unlock Island Submarine",
+  "Misc/Unlock Island",
+
+  // Grind tasks until level 11
+  "Manor/Kitchen",
+  "Mosquito/Burn Delay",
+  "Macguffin/Compass", // Unlock desert for ultrahydrated use
+
+  // First -combat group
+  "War/Enrage", // Open the War ASAP for Yellow rays
+  "War/Flyers Start", // Start the war and get flyers
+  "War/Flyers End", // End the flyers quest ASAP in case of tracking errors
+  "Hidden City/Forest Coin", // First to get meat
+  "Hidden City/Forest Map",
+  "Hidden City/Forest Fertilizer",
+  "Hidden City/Forest Sapling", // Last to sell bar skins
   "Manor/Billiards",
-  "War/Enrage",
-  "War/Flyers End", // Turn in flyers ASAP in-case of tracking issues
-  "Giant/Airship",
   "Friar/Finish",
-  "Crypt/Cranny",
-  "Mosquito/Mosquito",
-  "Hidden City/Open Temple",
-  "Tavern/Finish",
-  "Giant/Basement Finish",
 
-  // Burn delay to unlock remaining noncombats
+  // Open delay
+  "Manor/Start Floor2",
   "Palindome/Copperhead",
-  "Palindome/Bat Snake",
-  "Palindome/Cold Snake",
-  "Giant/Ground",
-  "Palindome/Zepplin",
-  "Manor/Bedroom",
-  "Manor/Bathroom Delay",
-  "Manor/Gallery Delay",
 
-  // Line up more noncombats
-  "Manor/Gallery", // Gallery first in-case we banished Out in the Garden
-  "Giant/Top Floor",
-  "Manor/Bathroom",
-  "Manor/Ballroom",
+  // Do summons when ready
+  "Summon/Mountain Man",
+  "Summon/Astrologer Of Shub-Jigguwatt",
+  "Summon/Astronomer",
+  "Summon/Camel's Toe",
+  "Summon/Baa'baa'bu'ran",
 
-  // Detour to route Steely-Eyed Squint
-  "Manor/Wine Cellar",
-  "Manor/Laundry Room",
-
-  // Finish noncombats, now with freekills available
-  "Palindome/Alarm Gem",
-
-  // Use Hidden City to charge camel
+  // Start Hidden city
+  "Hidden City/Open Temple",
+  "Hidden City/Open City",
   "Hidden City/Open Bowling",
   "Hidden City/Open Office",
   "Hidden City/Open Hospital",
   "Hidden City/Open Apartment",
 
-  // Nostalgia chaining
-  "Orc Chasm/ABoo Start",
-  "Crypt/Nook",
-  "Orc Chasm/ABoo Peak",
+  // Setup additional -combats
+  "Manor/Bedroom",
+  "Palindome/Bat Snake",
+  "Giant/Grow Beanstalk",
+  "Bat/Use Sonar 3", // Reveal more delay
+  "Palindome/Cold Snake",
 
-  "Hidden City/Apartment", // Get this out of the way
-  "Macguffin/Open Pyramid", // Open more delay for lategame
+  // Get and use clovers
+  "Misc/Hermit Clover",
+  "McLargeHuge/Trapper Return",
+  "Palindome/Protesters",
 
-  // Non-delay quests
+  // Second -combat group
+  "Hidden City/Banish Janitors",
   "Mosquito/Finish",
-  "Tavern/Finish",
-  "Bat/Use Sonar",
-  "Crypt/Finish",
-  "McLargeHuge/Finish",
-  "Orc Chasm/Finish",
+  "Crypt/Cranny",
+  "Giant/Basement Finish",
+  "Giant/Unlock HITS",
+  "McLargeHuge/Climb",
+
+  // The following 3 tasks should always stay in this order
+  "Macguffin/Oasis", // Get ultrahydrated as soon as needed
+  "Macguffin/Oasis Drum", // Get drum as soon as pages are gathered
+  "Macguffin/Desert", // charge camel for protestors
+
+  // Finish remaining quests
+  "Crypt/Alcove",
+
+  // Hidden City
+  "Hidden City/Office Files", // Banish janitors under delay
+  "Hidden City/Apartment",
+  "Hidden City/Hospital",
+  "Hidden City/Bowling",
+
+  "Manor/Boss",
+  "McLargeHuge/Finish", // Get Eagle beast banish
   "Giant/Finish",
+  "Palindome/Talisman",
+  "Palindome/Palindome Dudes", // Use Eagle beast banish
+  "Crypt/Niche",
+  "War/Junkyard End",
+
+  "Tavern/Finish",
+
+  // Setup for +meat/+item set
+  "Digital/Vanya",
+  "Digital/Megalo",
+  "Hidden City/Office Boss", // Get Eagle dude banish
+  "Macguffin/Upper Chamber",
+  "Orc Chasm/Start Peaks",
+  "Orc Chasm/ABoo Carto",
+  "War/Open Nuns",
+
+  // Bulk +meat/+item tasks
+  "Misc/Shadow Rift",
+  "Misc/Shadow Lodestone",
+  "War/Nuns",
+  "Crypt/Nook",
+  "Orc Chasm/ABoo Clues",
+  "Digital/Hero",
+  "Orc Chasm/Oil Jar",
+  "Macguffin/Middle Chamber", // Avoid Eagle beast banish!
+  "Orc Chasm/Twin Init Search",
+  "Orc Chasm/Twin Init", // Use Eagle dude banish
+  "Digital/Key",
+
+  "Keys/Star Key", // Allow for better use of orb
+  "Macguffin/Finish",
+  "Crypt/Finish",
   "War/Boss Hippie",
-  "War/Boss Frat",
+  "Orc Chasm/Finish",
 
   // Finish up with last delay
-  "Macguffin/Finish",
-  "Knob/King",
   "Bat/Finish",
+  "Misc/Eldritch Tentacle",
+  "Knob/King",
 
-  // Obtain available keys before attempting the daily dungeon
-  "Keys/Deck",
-  "Keys/Lockpicking",
+  // Finish last keys
+  "Keys/All Heroes",
 
-  "Tower/Finish",
-  "Organ/Finish", // Organ last, just so it doesn't appear in turncount
+  "Tower/Naughty Sorceress",
 ];
 
-export function prioritize(tasks: Task[], ignore_missing_tasks?: boolean): Task[] {
-  return orderByRoute(tasks, routing, ignore_missing_tasks);
+export function prioritize(tasks: Task[]): Task[] {
+  return orderByRoute(tasks, routing, false);
 }

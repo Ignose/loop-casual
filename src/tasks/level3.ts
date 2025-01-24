@@ -3,6 +3,7 @@ import { $effects } from "libram";
 import { CombatStrategy } from "../engine/combat";
 import { Quest } from "../engine/task";
 import { step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
 
 export const TavernQuest: Quest = {
   name: "Tavern",
@@ -10,6 +11,7 @@ export const TavernQuest: Quest = {
     {
       name: "Start",
       after: ["Mosquito/Finish"],
+      priority: () => Priorities.Free,
       ready: () => myLevel() >= 3,
       completed: () => step("questL03Rat") >= 0,
       do: () => visitUrl("council.php"),
@@ -19,6 +21,7 @@ export const TavernQuest: Quest = {
     {
       name: "Tavernkeep",
       after: ["Start"],
+      priority: () => Priorities.Free,
       completed: () => step("questL03Rat") >= 1,
       do: () => visitUrl("tavern.php?place=barkeep"),
       limit: { tries: 1 },
@@ -50,6 +53,7 @@ export const TavernQuest: Quest = {
     {
       name: "Finish",
       after: ["Basement"],
+      priority: () => Priorities.Free,
       completed: () => step("questL03Rat") === 999,
       do: () => visitUrl("tavern.php?place=barkeep"),
       limit: { tries: 1 },

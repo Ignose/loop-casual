@@ -1,20 +1,26 @@
-import { cliExecute, floor, itemAmount, myLevel, use, visitUrl } from "kolmafia";
+import { changeMcd, cliExecute, council, currentMcd, floor, getWorkshed, Item, itemAmount, myAscensions, myHp, myLevel, myMaxhp, myMaxmp, myMeat, myMp, numericModifier, use, visitUrl } from "kolmafia";
 import {
   $effect,
   $effects,
+  $familiar,
   $item,
   $items,
   $location,
   $monster,
   $skill,
+  AutumnAton,
+  ensureEffect,
   get,
   have,
   Macro,
   SourceTerminal,
 } from "libram";
-import { Quest, Task } from "../engine/task";
+import { Priority, Quest, Task } from "../engine/task";
 import { CombatStrategy } from "../engine/combat";
-import { OutfitSpec, step } from "grimoire-kolmafia";
+import { Guards, OutfitSpec, step } from "grimoire-kolmafia";
+import { customRestoreMp, fillHp } from "../engine/moods";
+import { Priorities } from "../engine/priority";
+import { atLevel } from "../lib";
 
 const ABoo: Task[] = [
   {
@@ -27,66 +33,60 @@ const ABoo: Task[] = [
     limit: { tries: 1 },
   },
   {
-    name: "ABoo Clues",
+    name: "ABoo Carto",
     after: ["ABoo Start"],
-    acquire: [
-      { item: $item`yellow rocket`, useful: () => !have($effect`Everything Looks Yellow`) },
-    ],
-    priority: () => get("lastCopyableMonster") === $monster`toothy sklelton`, // After Defiled Nook
-    completed: () => itemAmount($item`A-Boo clue`) * 30 >= get("booPeakProgress"),
+    completed: () =>
+      !have($skill`Comprehensive Cartography`) ||
+      $location`A-Boo Peak`.turnsSpent > 0 ||
+      get("lastCartographyBooPeak") === myAscensions(),
     prepare: () => {
-      if (!SourceTerminal.isCurrentSkill($skill`Duplicate`))
-        SourceTerminal.educate([$skill`Duplicate`, $skill`Digitize`]);
+      if (have($item`pec oil`)) ensureEffect($effect`Oiled-Up`);
+      use($item`A-Boo clue`);
+      fillHp();
     },
     do: $location`A-Boo Peak`,
-    outfit: (): OutfitSpec => {
-      if (
-        $location`A-Boo Peak`.turnsSpent === 0 &&
-        $location`Twin Peak`.turnsSpent === 0 &&
-        $location`Oil Peak`.turnsSpent === 0 &&
-        have($skill`Comprehensive Cartography`)
-      ) {
-        // Prepare for Ghostly Memories (1430)
-        return { modifier: "spooky res, cold res, HP" };
-      } else {
-        return {
-          modifier: "item 667max",
-          equip: $items`A Light that Never Goes Out`,
-          skipDefaults: true,
-        };
-      }
+    effects: $effects`Red Door Syndrome`,
+    outfit: {
+      modifier: "20 spooky res, 20 cold res, HP",
+      familiar: $familiar`Exotic Parrot`,
     },
-    effects: $effects`Merry Smithsness`,
-    combat: new CombatStrategy()
-      .macro((): Macro => {
-        if (get("lastCopyableMonster") === $monster`toothy sklelton`) {
-          return new Macro()
-            .trySkill($skill`Feel Nostalgic`)
-            .trySkill(`Duplicate`)
-            .tryItem(`yellow rocket`);
-        } else {
-          return new Macro()
-            .trySkill($skill`Feel Envy`)
-            .trySkill($skill`Saucegeyser`)
-            .repeat();
-        }
-      })
-      .killHard(),
     choices: { 611: 1, 1430: 1 },
-    limit: { tries: 4 },
+    combat: new CombatStrategy().killItem(),
+    limit: { tries: 1 },
+    freeaction: true,
+    expectbeatenup: true,
+  },
+  {
+    name: "ABoo Clues",
+    after: ["ABoo Start", "ABoo Carto"],
+    completed: () => itemAmount($item`A-Boo clue`) * 30 >= get("booPeakProgress"),
+    do: $location`A-Boo Peak`,
+    outfit: { modifier: "item", equip: $items`Space Trip safety headphones, HOA regulation book` },
+    combat: new CombatStrategy().killItem(),
+    orbtargets: () => [],
+    choices: { 611: 1, 1430: 1 },
+    limit: { soft: 15 },
   },
   {
     name: "ABoo Horror",
-    after: ["ABoo Clues"],
+    after: ["ABoo Start", "ABoo Carto"],
     ready: () => have($item`A-Boo clue`),
     completed: () => get("booPeakProgress") === 0,
     prepare: () => {
+      if (have($item`pec oil`)) ensureEffect($effect`Oiled-Up`);
       use($item`A-Boo clue`);
+      fillHp();
     },
     do: $location`A-Boo Peak`,
-    outfit: { modifier: "spooky res, cold res, HP" },
-    choices: { 611: 1 },
-    limit: { tries: 4 },
+    effects: $effects`Red Door Syndrome`,
+    outfit: {
+      modifier: "20 spooky res, 20 cold res, HP",
+      familiar: $familiar`Exotic Parrot`,
+    },
+    choices: { 611: 1, 1430: 1 },
+    limit: { tries: 5 },
+    freeaction: true,
+    expectbeatenup: true,
   },
   {
     name: "ABoo Peak",
@@ -102,10 +102,45 @@ const Oil: Task[] = [
     name: "Oil Kill",
     after: ["Start Peaks"],
     completed: () => get("oilPeakProgress") === 0,
+    prepare: () => {
+      if (myMp() < 80 && myMaxmp() >= 80) customRestoreMp(80 - myMp());
+      if (myHp() < 100 && myMaxhp() >= 100) customRestoreMp(100 - myMp());
+      if (numericModifier("Monster Level") < 100) changeMcd(10);
+    },
+    post: () => {
+      if (currentMcd() > 0) changeMcd(0);
+    },
     do: $location`Oil Peak`,
-    outfit: { modifier: "ML" },
-    combat: new CombatStrategy().kill(),
-    limit: { tries: 6 },
+    outfit: () => {
+      const spec: OutfitSpec & { equip: Item[] } = {
+        modifier: "ML 100 max, 0.1 item",
+        equip: [],
+        avoid: $items`Kramco Sausage-o-Matic™`,
+      };
+
+      // Use a retro superhero cape to dodge the first hit
+      if (have($item`unwrapped knock-off retro superhero cape`)) {
+        spec.equip.push($item`unwrapped knock-off retro superhero cape`);
+        spec.modes = { retrocape: ["vampire", "hold"] };
+      }
+
+      // The unbreakable umbrella lowers the ML cap; handle it separately.
+      if (have($item`unbreakable umbrella`)) {
+        spec.modifier = "ML 80 max, 0.1 item";
+        spec.equip.push($item`unbreakable umbrella`);
+      }
+
+      // Use the Tot for more +item
+      if (have($familiar`Trick-or-Treating Tot`) && have($item`li'l ninja costume`)) {
+        spec.familiar = $familiar`Trick-or-Treating Tot`;
+        spec.equip.push($item`li'l ninja costume`);
+      }
+
+      return spec;
+    },
+    combat: new CombatStrategy().killItem(),
+    limit: { tries: 18 },
+    orbtargets: () => undefined,
   },
   {
     name: "Oil Peak",
@@ -120,7 +155,6 @@ const Twin: Task[] = [
   {
     name: "Twin Stench",
     after: ["Start Peaks"],
-    priority: () => get("hasAutumnaton"),
     completed: () => !!(get("twinPeakProgress") & 1),
     do: () => {
       use($item`rusty hedge trimmers`);
@@ -171,37 +205,117 @@ export const ChasmQuest: Quest = {
   tasks: [
     {
       name: "Start",
-      after: ["Toot/Finish"],
-      priority: () => get("hasAutumnaton"),
-      ready: () => myLevel() >= 9,
+      after: [],
+      ready: () => atLevel(9),
       completed: () => step("questL09Topping") !== -1,
       do: () => visitUrl("council.php"),
       limit: { tries: 1 },
+      priority: () => Priorities.Free,
       freeaction: true,
+    },
+    {
+      name: "Bat Wings Bridge Parts",
+      after: ["Start"],
+      priority: () => Priorities.Free,
+      ready: () => have($item`bat wings`) && get("chasmBridgeProgress") >= 25,
+      completed: () => step("questL09Topping") >= 1,
+      do: () => {
+        visitUrl(`place.php?whichplace=orc_chasm&action=bridge${get("chasmBridgeProgress")}`); // use existing materials
+        visitUrl("place.php?whichplace=orc_chasm&action=bridge_jump");
+        visitUrl("place.php?whichplace=highlands&action=highlands_dude");
+      },
+      outfit: { equip: $items`bat wings` },
+      freeaction: true,
+      limit: { tries: 30, unready: true },
     },
     {
       name: "Bridge",
-      after: ["Start"],
-      priority: () => get("hasAutumnaton"),
-      completed: () => step("questL09Topping") >= 1,
-      do: (): void => {
-        if (have($item`fish hatchet`)) use($item`fish hatchet`);
-        visitUrl(`place.php?whichplace=orc_chasm&action=bridge${get("chasmBridgeProgress")}`); // use existing materials
-        const count = floor((34 - get("chasmBridgeProgress")) / 5);
-        if (count <= 0) return;
-        cliExecute(`acquire ${count} snow boards`);
-        visitUrl(`place.php?whichplace=orc_chasm&action=bridge${get("chasmBridgeProgress")}`);
+      after: ["Start", "Macguffin/Forest"], // Wait for black paint
+      priority: (): Priority => {
+        if (getWorkshed() === $item`model train set`) {
+          return Priorities.BadTrain;
+        }
+        if (AutumnAton.have()) {
+          if ($location`The Smut Orc Logging Camp`.turnsSpent === 0)
+            return Priorities.GoodAutumnaton;
+        }
+        return Priorities.None;
       },
-      acquire: [{ item: $item`snow berries`, num: 12 }],
-      limit: { tries: 1 },
+      ready: () =>
+        ((have($item`frozen jeans`) ||
+          have($item`industrial fire extinguisher`) ||
+          (have($item`June cleaver`) && get("_juneCleaverCold", 0) >= 5)) &&
+          get("smutOrcNoncombatProgress") < 15) ||
+        have($effect`Red Door Syndrome`) ||
+        myMeat() >= 1000,
+      completed: () => step("questL09Topping") >= 1,
+      prepare: () => {
+        if (get("smutOrcNoncombatProgress") >= 15 && step("questL11Black") >= 2) {
+          ensureEffect($effect`Red Door Syndrome`);
+          ensureEffect($effect`Butt-Rock Hair`);
+        }
+      },
+      do: $location`The Smut Orc Logging Camp`,
+      post: (): void => {
+        if (have($item`smut orc keepsake box`)) use($item`smut orc keepsake box`);
+        visitUrl(`place.php?whichplace=orc_chasm&action=bridge${get("chasmBridgeProgress")}`); // use existing materials
+      },
+      outfit: () => {
+        if (get("smutOrcNoncombatProgress") < 15) {
+          const equip = $items`Space Trip safety headphones, HOA regulation book`;
+          if (have($item`frozen jeans`)) equip.push($item`frozen jeans`);
+          else if (have($item`June cleaver`) && get("_juneCleaverCold", 0) >= 5)
+            equip.push($item`June cleaver`);
+          else if (have($item`industrial fire extinguisher`))
+            equip.push($item`industrial fire extinguisher`);
+          return {
+            modifier: "item, -ML",
+            equip: equip,
+            avoid: $items`broken champagne bottle`,
+          };
+        } else return { modifier: "sleaze res", equip: $items`combat lover's locket` };
+      },
+      combat: new CombatStrategy()
+        .macro(new Macro().attack().repeat(), [
+          $monster`smut orc jacker`,
+          $monster`smut orc nailer`,
+          $monster`smut orc pipelayer`,
+          $monster`smut orc screwer`,
+        ])
+        .kill(),
+      choices: { 1345: 3 },
+      freeaction: () => get("smutOrcNoncombatProgress") >= 15,
+      limit: {
+        soft: 45,
+        guard: Guards.after(
+          () => !AutumnAton.have() || $location`The Smut Orc Logging Camp`.turnsSpent > 0
+        ),
+      },
+    },
+    {
+      name: "Bridge Parts",
+      after: ["Start"],
+      priority: () => Priorities.Free,
+      ready: () =>
+        (have($item`morningwood plank`) ||
+          have($item`raging hardwood plank`) ||
+          have($item`weirdwood plank`)) &&
+        (have($item`long hard screw`) || have($item`messy butt joint`) || have($item`thick caulk`)),
+      completed: () => step("questL09Topping") >= 1,
+      do: () => {
+        visitUrl(`place.php?whichplace=orc_chasm&action=bridge${get("chasmBridgeProgress")}`); // use existing materials
+      },
       freeaction: true,
+      limit: { tries: 30, unready: true },
     },
     {
       name: "Start Peaks",
-      after: ["Bridge"],
-      priority: () => get("hasAutumnaton"),
+      after: ["Bridge", "Bridge Parts"],
       completed: () => step("questL09Topping") >= 2,
-      do: () => visitUrl("place.php?whichplace=highlands&action=highlands_dude"),
+      do: () => {
+        visitUrl("place.php?whichplace=highlands&action=highlands_dude");
+        council();
+      },
       limit: { tries: 1 },
       freeaction: true,
     },
@@ -210,9 +324,12 @@ export const ChasmQuest: Quest = {
     ...Twin,
     {
       name: "Finish",
-      after: ["ABoo Peak", "Oil Peak", "Twin Init"],
+      after: ["ABoo Peak", "Oil Peak", "Twin Init", "Twin Init Search"],
       completed: () => step("questL09Topping") === 999,
-      do: () => visitUrl("place.php?whichplace=highlands&action=highlands_dude"),
+      do: () => {
+        visitUrl("place.php?whichplace=highlands&action=highlands_dude");
+        council();
+      },
       limit: { tries: 1 },
       freeaction: true,
     },

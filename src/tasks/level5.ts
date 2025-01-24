@@ -3,6 +3,7 @@ import { $effects, $item, $location, $monster, have } from "libram";
 import { Quest } from "../engine/task";
 import { CombatStrategy } from "../engine/combat";
 import { step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
 
 export const KnobQuest: Quest = {
   name: "Knob",
@@ -10,6 +11,7 @@ export const KnobQuest: Quest = {
     {
       name: "Start",
       after: ["Toot/Finish"],
+      priority: () => Priorities.Free,
       ready: () => myLevel() >= 5,
       completed: () => step("questL05Goblin") >= 0,
       do: () => visitUrl("council.php"),
@@ -19,6 +21,10 @@ export const KnobQuest: Quest = {
     {
       name: "Outskirts",
       after: [],
+      prepare: () => {
+        // Create logic for banishing Goblins if we're going to Bofa chain here
+      },
+      priority: () => Priorities.CopyTargetChain,
       completed: () => have($item`Knob Goblin encryption key`) || step("questL05Goblin") > 0,
       do: $location`The Outskirts of Cobb's Knob`,
       choices: { 111: 3, 113: 2, 118: 1 },
@@ -28,6 +34,7 @@ export const KnobQuest: Quest = {
     {
       name: "Open Knob",
       after: ["Start", "Outskirts"],
+      priority: () => Priorities.Free,
       completed: () => step("questL05Goblin") >= 1,
       do: () => use($item`Cobb's Knob map`),
       limit: { tries: 1 },

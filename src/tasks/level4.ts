@@ -3,6 +3,7 @@ import { $item, $location, $monster } from "libram";
 import { Quest } from "../engine/task";
 import { CombatStrategy } from "../engine/combat";
 import { step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
 
 export const BatQuest: Quest = {
   name: "Bat",
@@ -10,6 +11,7 @@ export const BatQuest: Quest = {
     {
       name: "Start",
       after: ["Toot/Finish"],
+      priority: () => Priorities.Free,
       ready: () => myLevel() >= 4,
       completed: () => step("questL04Bat") !== -1,
       do: () => visitUrl("council.php"),
@@ -19,6 +21,7 @@ export const BatQuest: Quest = {
     {
       name: "Use Sonar",
       after: ["Start"],
+      priority: () => Priorities.Free,
       acquire: [{ item: $item`sonar-in-a-biscuit` }],
       completed: () => step("questL04Bat") >= 3,
       do: () => use($item`sonar-in-a-biscuit`),
@@ -28,6 +31,10 @@ export const BatQuest: Quest = {
     {
       name: "Boss Bat",
       after: ["Use Sonar"],
+      priority: () => Priorities.CopyTargetChain,
+      prepare: () => {
+        // Add some logic here
+      },
       completed: () => step("questL04Bat") >= 4,
       do: $location`The Boss Bat's Lair`,
       combat: new CombatStrategy().kill($monster`Boss Bat`).ignoreNoBanish(),

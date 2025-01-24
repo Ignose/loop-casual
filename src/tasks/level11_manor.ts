@@ -1,74 +1,89 @@
-import { create, myClass, myFury, myInebriety, use, useSkill, visitUrl } from "kolmafia";
+import { changeMcd, create, currentMcd, myClass, myDaycount, myFury, myInebriety, myLevel, numericModifier, restoreMp, use, useSkill, visitUrl } from "kolmafia";
 import {
   $class,
   $effect,
   $effects,
+  $familiar,
   $item,
   $items,
   $location,
   $monster,
   $monsters,
+  $phylum,
   $skill,
   ensureEffect,
   get,
+  getActiveEffects,
   have,
   Macro,
+  Modes,
 } from "libram";
 import { Quest, Task } from "../engine/task";
-import { CombatStrategy } from "../engine/combat";
-import { step } from "grimoire-kolmafia";
+import { CombatStrategy, killMacro } from "../engine/combat";
+import { OutfitSpec, step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
+import { tryPlayApriling } from "../engine/resources";
+import { tuneSnapper } from "../lib";
 
 const Manor1: Task[] = [
   {
     name: "Kitchen",
     after: ["Start"],
-    priority: () => get("hasAutumnaton") && $location`The Haunted Kitchen`.turnsSpent === 0,
     completed: () => step("questM20Necklace") >= 1,
+    prepare: () => {
+      if (have($item`rainbow glitter candle`)) use($item`rainbow glitter candle`);
+    },
     do: $location`The Haunted Kitchen`,
     outfit: { modifier: "stench res, hot res" },
     choices: { 893: 2 },
     combat: new CombatStrategy().kill(),
-    limit: { turns: 7 },
+    limit: { soft: 21 },
   },
   {
     name: "Billiards",
     after: ["Kitchen"],
     completed: () => step("questM20Necklace") >= 3,
+    priority: () =>
+      have($effect`Chalky Hand`) && !have($item`handful of hand chalk`)
+        ? Priorities.Effect
+        : Priorities.None,
     prepare: () => {
-      if (!have($item`government-issued eyeshade`)) ensureEffect($effect`Influence of Sphere`);
+      if (have($item`handful of hand chalk`) && have($item`pool cue`))
+        ensureEffect($effect`Chalky Hand`);
+      tryPlayApriling("-combat");
     },
-    acquire: [{ item: $item`T.U.R.D.S. Key`, num: 1, price: 4000, optional: true }],
-    ready: () => myInebriety() <= 15, // Nonnegative contribution
+    ready: () => myInebriety() <= 15 && (myInebriety() === 1 || myDaycount() > 1), // Nonnegative contribution
     do: $location`The Haunted Billiards Room`,
-    choices: { 875: 1, 900: 2, 1436: 2 },
+    choices: { 875: 1, 900: 2, 1436: 1 },
     outfit: () => {
       return {
-        equip: have($item`government-issued eyeshade`) ? $items`government-issued eyeshade` : [],
+        equip: $items`pool cue`,
         modifier: "-combat",
       };
     },
     combat: new CombatStrategy()
       .ignore()
-      .banish($monster`pooltergeist`)
-      .macro(new Macro().tryItem($item`T.U.R.D.S. Key`), $monster`chalkdust wraith`)
+      .killItem($monster`chalkdust wraith`)
       .kill($monster`pooltergeist (ultra-rare)`),
-    effects: $effects`Chalky Hand`,
-    limit: { soft: 10 },
+    limit: {
+      soft: 20,
+      message: `Consider increasing your permanent pool skill with "A Shark's Chum", if you have not.`,
+    },
   },
   {
     name: "Library",
     after: ["Billiards"],
     completed: () => step("questM20Necklace") >= 4,
     do: $location`The Haunted Library`,
-    combat: new CombatStrategy()
-      .banish($monsters`banshee librarian, bookbat`)
-      .kill($monster`writing desk`),
-    choices: { 163: 4, 888: 4, 889: 5, 894: 1 },
-    limit: { soft: 10 },
+    combat: new CombatStrategy().banish($monsters`banshee librarian, bookbat`).kill(),
+    outfit: { equip: $items`deft pirate hook` },
+    choices: { 163: 4, 888: 5, 889: 5, 894: 1 },
+    limit: { soft: 20 },
   },
   {
     name: "Finish Floor1",
     after: ["Library"],
+    priority: () => Priorities.Free,
     completed: () => step("questM20Necklace") === 999,
     do: () => visitUrl("place.php?whichplace=manor1&action=manor1_ladys"),
     limit: { tries: 1 },
@@ -80,6 +95,7 @@ const Manor2: Task[] = [
   {
     name: "Start Floor2",
     after: ["Finish Floor1"],
+    priority: () => Priorities.Free,
     completed: () => step("questM21Dance") >= 1,
     do: () => visitUrl("place.php?whichplace=manor2&action=manor2_ladys"),
     limit: { tries: 1 },
@@ -88,7 +104,10 @@ const Manor2: Task[] = [
   {
     name: "Gallery Delay",
     after: ["Start Floor2"],
-    completed: () => $location`The Haunted Gallery`.turnsSpent >= 5 || step("questM21Dance") >= 2,
+    completed: () =>
+      $location`The Haunted Gallery`.turnsSpent >= 5 ||
+      have($item`Lady Spookyraven's dancing shoes`) ||
+      step("questM21Dance") >= 2,
     do: $location`The Haunted Gallery`,
     choices: { 89: 6, 896: 1 }, // TODO: louvre
     limit: { turns: 5 },
@@ -101,17 +120,29 @@ const Manor2: Task[] = [
     do: $location`The Haunted Gallery`,
     choices: { 89: 6, 896: 1 }, // TODO: louvre
     outfit: { modifier: "-combat" },
-    limit: { soft: 10 },
+    limit: { soft: 15 },
   },
   {
     name: "Bathroom Delay",
     after: ["Start Floor2"],
-    completed: () => $location`The Haunted Bathroom`.turnsSpent >= 5 || step("questM21Dance") >= 2,
+    completed: () =>
+      $location`The Haunted Bathroom`.turnsSpent >= 5 ||
+      have($item`Lady Spookyraven's powder puff`) ||
+      step("questM21Dance") >= 2,
     do: $location`The Haunted Bathroom`,
     choices: { 881: 1, 105: 1, 892: 1 },
-    combat: new CombatStrategy().kill($monster`cosmetics wraith`),
+    combat: new CombatStrategy()
+      .killHard($monster`cosmetics wraith`)
+      .macro(() => {
+        if (have($item`genie bottle`)) return new Macro();
+        return killMacro();
+      }, $monster`toilet papergeist`)
+      .banish($monsters`claw-foot bathtub, malevolent hair clog`),
     limit: { turns: 5 },
     delay: 5,
+    // No need to search for cosmetics wraith
+    orbtargets: () => [],
+    ignore_banishes: () => have($item`genie bottle`),
   },
   {
     name: "Bathroom",
@@ -119,16 +150,31 @@ const Manor2: Task[] = [
     completed: () => have($item`Lady Spookyraven's powder puff`) || step("questM21Dance") >= 2,
     do: $location`The Haunted Bathroom`,
     choices: { 881: 1, 105: 1, 892: 1 },
-    outfit: { modifier: "-combat" },
-    combat: new CombatStrategy().kill($monster`cosmetics wraith`),
-    limit: { soft: 10 },
+    outfit: () => {
+      if (!have($effect`Citizen of a Zone`) && have($familiar`Patriotic Eagle`)) {
+        return { modifier: "-combat", familiar: $familiar`Patriotic Eagle` };
+      }
+      return { modifier: "-combat" };
+    },
+    combat: new CombatStrategy()
+      .startingMacro(Macro.trySkill($skill`%fn, let's pledge allegiance to a Zone`))
+      .killHard($monster`cosmetics wraith`)
+      .macro(() => {
+        if (have($item`genie bottle`)) return new Macro();
+        return killMacro();
+      }, $monster`toilet papergeist`)
+      .banish($monsters`claw-foot bathtub, malevolent hair clog`),
+    limit: { soft: 15 },
+    // No need to search for cosmetics wraith
+    orbtargets: () => [],
+    ignore_banishes: () => have($item`genie bottle`),
   },
   {
     name: "Bedroom",
     after: ["Start Floor2"],
     completed: () => have($item`Lady Spookyraven's finest gown`) || step("questM21Dance") >= 2,
     do: $location`The Haunted Bedroom`,
-    choices: { 876: 1, 877: 1, 878: 3, 879: 1, 880: 1, 897: 2 },
+    choices: { 876: 1, 877: 1, 878: !have($item`Lord Spookyraven's spectacles`) ? 3 : 4, 879: 1, 880: 1, 897: 2 },
     combat: new CombatStrategy()
       .kill($monsters`elegant animated nightstand, animated ornate nightstand`) // kill ornate nightstand if banish fails
       .macro(
@@ -145,14 +191,17 @@ const Manor2: Task[] = [
       else return { equip: $items`Pantsgiving` };
     },
     delay: () => (have($item`Lord Spookyraven's spectacles`) ? 5 : 0),
+    parachute: $monster`animated ornate nightstand`,
     limit: { soft: 10 },
   },
-  {
+   {
     name: "Open Ballroom",
     after: ["Gallery", "Bathroom", "Bedroom"],
     completed: () => step("questM21Dance") >= 3,
+    priority: () => Priorities.Free,
     do: () => visitUrl("place.php?whichplace=manor2&action=manor2_ladys"),
     limit: { tries: 1 },
+    freeaction: true,
   },
   {
     name: "Finish Floor2",
@@ -193,60 +242,53 @@ const ManorBasement: Task[] = [
     outfit: { equip: $items`Lord Spookyraven's spectacles` },
     limit: { tries: 1 },
   },
-  {
+   {
     name: "Wine Cellar",
     after: ["Learn Recipe"],
+    prepare: () => tryPlayApriling("booze"),
     completed: () =>
       have($item`bottle of Chateau de Vinegar`) ||
       have($item`unstable fulminate`) ||
       have($item`wine bomb`) ||
       step("questL11Manor") >= 3,
-    priority: () => have($effect`Steely-Eyed Squint`),
-    prepare: (): void => {
-      if (!get("_steelyEyedSquintUsed")) useSkill($skill`Steely-Eyed Squint`);
-    },
     do: $location`The Haunted Wine Cellar`,
-    outfit: {
-      equip: $items`A Light that Never Goes Out, Lil' Doctor™ bag`,
-      modifier: "item, booze drop",
-      skipDefaults: true,
+    outfit: () => {
+      return {
+        modifier: "item, booze drop",
+        equip:
+          have($item`Lil' Doctor™ bag`) && get("_otoscopeUsed") < 3 ? $items`Lil' Doctor™ bag` : [],
+      };
     },
-    effects: $effects`Merry Smithsness`,
     choices: { 901: 2 },
     combat: new CombatStrategy()
-      .macro(new Macro().trySkill($skill`Otoscope`), $monster`possessed wine rack`)
-      .banish($monsters`mad wino, skeletal sommelier`)
-      .killFree(),
-    limit: { soft: 10 },
+      .macro(Macro.trySkill($skill`Otoscope`), $monster`possessed wine rack`)
+      .killItem($monster`possessed wine rack`)
+      .banish($monsters`mad wino, skeletal sommelier`),
+    limit: { soft: 15 },
   },
   {
     name: "Laundry Room",
     after: ["Learn Recipe"],
-    priority: () => have($effect`Steely-Eyed Squint`),
+    prepare: () => tryPlayApriling("food"),
     completed: () =>
       have($item`blasting soda`) ||
       have($item`unstable fulminate`) ||
       have($item`wine bomb`) ||
       step("questL11Manor") >= 3,
-    prepare: (): void => {
-      if (!get("_steelyEyedSquintUsed")) useSkill($skill`Steely-Eyed Squint`);
-    },
     do: $location`The Haunted Laundry Room`,
-    outfit: {
-      equip: $items`A Light that Never Goes Out, Lil' Doctor™ bag`,
-      modifier: "item, food drop",
-      skipDefaults: true,
+    outfit: () => {
+      return {
+        modifier: "item, food drop",
+        equip:
+          have($item`Lil' Doctor™ bag`) && get("_otoscopeUsed") < 3 ? $items`Lil' Doctor™ bag` : [],
+      };
     },
-    effects: $effects`Merry Smithsness`,
     choices: { 891: 2 },
     combat: new CombatStrategy()
-      .macro(
-        new Macro().trySkill($skill`Otoscope`).trySkill($skill`Chest X-Ray`),
-        $monster`cabinet of Dr. Limpieza`
-      )
-      .banish($monsters`plaid ghost, possessed laundry press`)
-      .killFree(),
-    limit: { soft: 10 },
+      .macro(Macro.trySkill($skill`Otoscope`), $monster`cabinet of Dr. Limpieza`)
+      .killItem($monster`cabinet of Dr. Limpieza`)
+      .banish($monsters`plaid ghost, possessed laundry press`),
+    limit: { soft: 15 },
   },
   {
     name: "Fulminate",
@@ -261,12 +303,63 @@ const ManorBasement: Task[] = [
     name: "Boiler Room",
     after: ["Fulminate"],
     completed: () => have($item`wine bomb`) || step("questL11Manor") >= 3,
+    prepare: () => {
+      if (numericModifier("Monster Level") < 81) changeMcd(10);
+      tuneSnapper($phylum`constructs`);
+      restoreMp(200);
+    },
+    post: () => {
+      if (currentMcd() > 0) changeMcd(0);
+    },
     do: $location`The Haunted Boiler Room`,
-    outfit: { modifier: "ML", equip: $items`unstable fulminate` },
+    outfit: (): OutfitSpec => {
+      const result = {
+        equip: [$item`unstable fulminate`],
+        modes: <Modes>{},
+        familiar: $familiar`Red-Nosed Snapper`,
+      };
+      let ml_needed = 81 - 10; // -10 from MCD
+
+      // Include effects
+      for (const effect of getActiveEffects())
+        ml_needed -= numericModifier(effect, "Monster Level");
+      if (have($skill`Ur-Kel's Aria of Annoyance`) && !have($effect`Ur-Kel's Aria of Annoyance`))
+        ml_needed -= Math.min(2 * myLevel(), 60);
+      if (have($skill`Pride of the Puffin`) && !have($effect`Pride of the Puffin`)) ml_needed -= 10;
+      if (have($skill`Drescher's Annoying Noise`) && !have($effect`Drescher's Annoying Noise`))
+        ml_needed -= 10;
+
+      // Include some equipment
+      if (ml_needed > 0 && have($item`Jurassic Parka`) && have($skill`Torso Awareness`)) {
+        result.equip.push($item`Jurassic Parka`);
+        result.modes.parka = "spikolodon";
+        ml_needed -= Math.min(3 * myLevel(), 33);
+      }
+      if (ml_needed > 0 && have($item`old patched suit-pants`)) {
+        result.equip.push($item`old patched suit-pants`);
+        ml_needed -= 40;
+      }
+      if (ml_needed > 0 && have($item`backup camera`)) {
+        result.equip.push($item`backup camera`);
+        result.modes.backupcamera = "ml";
+        ml_needed -= Math.min(3 * myLevel(), 50);
+      }
+
+      if (ml_needed > 0) {
+        return {
+          ...result,
+          modifier: "ML",
+        };
+      } else {
+        return result;
+      }
+    },
+    effects: $effects`Ur-Kel's Aria of Annoyance, Pride of the Puffin, Drescher's Annoying Noise`,
     choices: { 902: 2 },
     combat: new CombatStrategy()
       .kill($monster`monstrous boiler`)
       .banish($monsters`coaltergeist, steam elemental`),
+    parachute: $monster`monstrous boiler`,
     limit: { soft: 10 },
   },
   {

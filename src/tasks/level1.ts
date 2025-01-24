@@ -2,6 +2,7 @@ import { use, visitUrl } from "kolmafia";
 import { $item, have } from "libram";
 import { Quest } from "../engine/task";
 import { step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
 
 export const TootQuest: Quest = {
   name: "Toot",
@@ -9,6 +10,7 @@ export const TootQuest: Quest = {
     {
       name: "Start",
       after: [],
+      priority: () => Priorities.Free,
       completed: () => step("questM05Toot") !== -1,
       do: () => visitUrl("council.php"),
       limit: { tries: 1 },
@@ -17,6 +19,7 @@ export const TootQuest: Quest = {
     {
       name: "Toot",
       after: ["Start"],
+      priority: () => Priorities.Free,
       completed: () => step("questM05Toot") > 0,
       do: () => visitUrl("tutorial.php?action=toot"),
       limit: { tries: 1 },
@@ -25,6 +28,7 @@ export const TootQuest: Quest = {
     {
       name: "Finish",
       after: ["Toot"],
+      priority: () => Priorities.Free,
       completed: () => step("questM05Toot") > 0 && !have($item`letter from King Ralph XI`),
       do: () => use($item`letter from King Ralph XI`),
       limit: { tries: 1 },

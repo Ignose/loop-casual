@@ -1,12 +1,15 @@
 import {
   cliExecute,
+  floor,
   myHp,
   myLevel,
   myMaxhp,
   myPrimestat,
+  numericModifier,
   runChoice,
   runCombat,
   totalFreeRests,
+  use,
   useSkill,
   visitUrl,
 } from "kolmafia";
@@ -20,6 +23,7 @@ import {
   $monster,
   $skill,
   $stat,
+  BeachComb,
   ChateauMantegna,
   ensureEffect,
   get,
@@ -31,7 +35,8 @@ import {
 } from "libram";
 import { Quest } from "../engine/task";
 import { CombatStrategy } from "../engine/combat";
-import { args } from "../main";
+import { Priorities } from "../engine/priority";
+import { args } from "../args";
 
 function primestatId(): number {
   switch (myPrimestat()) {
@@ -54,8 +59,7 @@ export const LevelingQuest: Quest = {
       ready: () => get("getawayCampsiteUnlocked"),
       completed: () =>
         have($effect`That's Just Cloud-Talk, Man`) ||
-        get("_campAwayCloudBuffs", 0) > 0 ||
-        myLevel() >= args.levelto,
+        get("_campAwayCloudBuffs", 0) > 0,
       do: () => visitUrl("place.php?whichplace=campaway&action=campaway_sky"),
       freeaction: true,
       limit: { tries: 1 },
@@ -64,7 +68,7 @@ export const LevelingQuest: Quest = {
       name: "Daycare",
       after: [],
       ready: () => get("daycareOpen"),
-      completed: () => get("_daycareGymScavenges") !== 0 || myLevel() >= args.levelto,
+      completed: () => get("_daycareGymScavenges") !== 0 || myLevel() >= 13,
       do: (): void => {
         if ((get("daycareOpen") || get("_daycareToday")) && !get("_daycareSpa")) {
           switch (myPrimestat()) {
@@ -90,7 +94,7 @@ export const LevelingQuest: Quest = {
       name: "Bastille",
       after: [],
       ready: () => have($item`Bastille Battalion control rig`),
-      completed: () => get("_bastilleGames") !== 0 || myLevel() >= args.levelto,
+      completed: () => get("_bastilleGames") !== 0 || myLevel() >= 13,
       do: () =>
         cliExecute(`bastille ${myPrimestat() === $stat`Mysticality` ? "myst" : myPrimestat()}`),
       limit: { tries: 1 },
@@ -100,10 +104,99 @@ export const LevelingQuest: Quest = {
       },
     },
     {
+      name: "Acquire Mouthwash",
+      priority: () => Priorities.Start,
+      completed: () =>
+        !have($item`Sept-Ember Censer`) ||
+        (get("availableSeptEmbers", 0) < 1 && get("_septEmbersCollected", false)) ||
+        args.minor.saveember,
+      do: (): void => {
+        // Grab Embers
+        visitUrl("shop.php?whichshop=september");
+        set("_septEmbersCollected", true);
+
+        // Grab Bembershoot
+        if (!have($item`bembershoot`))
+          visitUrl(`shop.php?whichshop=september&action=buyitem&quantity=1&whichrow=1516&pwd`);
+
+        // Grab Mouthwashes
+        const mouthwashes = floor(get("availableSeptEmbers", 0) / 2);
+        visitUrl(
+          `shop.php?whichshop=september&action=buyitem&quantity=${mouthwashes}&whichrow=1512&pwd`
+        );
+      },
+      limit: { tries: 1 },
+      freeaction: true,
+    },
+    {
+      name: "Mouthwash",
+      after: [
+        "Cloud Talk",
+        "Nellyville",
+        "Defective Game Grid",
+        "Misc/Cut Melodramedary",
+        "Acquire Mouthwash",
+      ],
+      priority: () => Priorities.Start,
+      completed: () => !have($item`Mmm-brr! brand mouthwash`),
+      do: () => {
+        // Use potions for cold resistance
+        if (have($item`rainbow glitter candle`)) use($item`rainbow glitter candle`);
+        if (have($item`pec oil`)) use($item`pec oil`);
+        if (have($skill`Emotionally Chipped`) && get("_feelPeacefulUsed") < 3)
+          ensureEffect($effect`Feeling Peaceful`);
+        if (have($item`MayDay™ supply package`)) use($item`MayDay™ supply package`);
+        if (have($item`scroll of Protection from Bad Stuff`))
+          use($item`scroll of Protection from Bad Stuff`);
+        if (have($item`bottle of antifreeze`)) use($item`bottle of antifreeze`);
+        if (have($item`recording of Rolando's Rondo of Resisto`))
+          use($item`recording of Rolando's Rondo of Resisto`);
+        if (BeachComb.available()) BeachComb.tryHead(BeachComb.head.COLD);
+        if (get("spacegateAlways") && get("spacegateVaccine1") && !get("_spacegateVaccine"))
+          ensureEffect($effect`Rainbow Vaccine`);
+
+        // If we are below the minimum cold resistance, wish away the difference
+        const coldMinimum = 33;
+        const wishableEffects = [
+          $effect`Fever From the Flavor`,
+          $effect`Boilermade`,
+          $effect`Inner Warmth`,
+          $effect`Super Structure`,
+          $effect`Icy Composition`,
+        ];
+        for (const effect of wishableEffects) {
+          if (numericModifier("Cold Resistance") >= coldMinimum) break;
+          if (have(effect)) continue;
+          if (
+            have($item`pocket wish`) ||
+            (have($item`genie bottle`) && get("_genieWishesUsed") < 3)
+          )
+            cliExecute(`genie effect ${effect.name}`);
+          else if (have($item`cursed monkey's paw`) && get("_monkeyPawWishesUsed") < 5)
+            cliExecute(`monkeypaw effect ${effect.name}`);
+          else break;
+        }
+        use($item`Mmm-brr! brand mouthwash`);
+      },
+      outfit: () => {
+        if (have($familiar`Trick-or-Treating Tot`) && have($item`li'l candy corn costume`))
+          return {
+            familiar: $familiar`Trick-or-Treating Tot`,
+            modifier: "cold res",
+          };
+        return {
+          familiar: $familiar`Exotic Parrot`,
+          modifier: "cold res",
+        };
+      },
+      limit: { tries: 4 },
+      freeaction: true,
+    },
+    {
       name: "Chateau",
       after: [],
       ready: () => ChateauMantegna.have(),
-      completed: () => get("timesRested") >= totalFreeRests() || myLevel() >= args.levelto,
+      completed: () => get("timesRested") >= totalFreeRests() || myLevel() >= 13,
       prepare: (): void => {
         // Set the chateau to give the proper stats
         if (myPrimestat() === $stat`Muscle`) {
@@ -130,7 +223,7 @@ export const LevelingQuest: Quest = {
       name: "LOV Tunnel",
       after: [],
       ready: () => get("loveTunnelAvailable"),
-      completed: () => get("_loveTunnelUsed") || myLevel() >= args.levelto,
+      completed: () => get("_loveTunnelUsed") || myLevel() >= 13,
       do: $location`The Tunnel of L.O.V.E.`,
       choices: { 1222: 1, 1223: 1, 1224: primestatId(), 1225: 1, 1226: 2, 1227: 1, 1228: 3 },
       combat: new CombatStrategy()
@@ -205,7 +298,7 @@ export const LevelingQuest: Quest = {
         },
       ],
       ready: () => have($familiar`God Lobster`),
-      completed: () => get("_godLobsterFights") >= 3 || myLevel() >= args.levelto,
+      completed: () => get("_godLobsterFights") >= 3 || myLevel() >= 13,
       do: (): void => {
         visitUrl("main.php?fightgodlobster=1");
         runCombat();
@@ -224,7 +317,7 @@ export const LevelingQuest: Quest = {
       name: "Witchess",
       after: [],
       ready: () => Witchess.have(),
-      completed: () => Witchess.fightsDone() >= 5 || myLevel() >= args.levelto,
+      completed: () => Witchess.fightsDone() >= 5 || myLevel() >= 13,
       do: () => Witchess.fightPiece($monster`Witchess Knight`),
       combat: new CombatStrategy().killHard(),
       outfit: {
@@ -248,7 +341,7 @@ export const LevelingQuest: Quest = {
         have($familiar`Pocket Professor`) &&
         have($item`Kramco Sausage-o-Matic™`) &&
         getKramcoWandererChance() === 1,
-      completed: () => get("_sausageFights") > 0 || myLevel() >= args.levelto || !args.professor,
+      completed: () => get("_sausageFights") > 0 || myLevel() >= 13,
       do: $location`The Outskirts of Cobb's Knob`,
       combat: new CombatStrategy()
         .macro(
@@ -276,7 +369,7 @@ export const LevelingQuest: Quest = {
           get: () => cliExecute("fold makeshift garbage shirt"),
         },
       ],
-      completed: () => get("_neverendingPartyFreeTurns") >= 10 || myLevel() >= args.levelto,
+      completed: () => get("_neverendingPartyFreeTurns") >= 10 || myLevel() >= 13,
       do: $location`The Neverending Party`,
       choices: { 1322: 2, 1324: 5 },
       combat: new CombatStrategy()
@@ -312,7 +405,7 @@ export const LevelingQuest: Quest = {
         },
       ],
       ready: () => have($familiar`Machine Elf`),
-      completed: () => get("_machineTunnelsAdv") >= 5 || myLevel() >= args.levelto,
+      completed: () => get("_machineTunnelsAdv") >= 5 || myLevel() >= 13,
       do: $location`The Deep Machine Tunnels`,
       combat: new CombatStrategy().killHard(),
       outfit: {

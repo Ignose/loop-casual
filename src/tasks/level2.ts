@@ -2,6 +2,7 @@ import { myLevel, visitUrl } from "kolmafia";
 import { $location } from "libram";
 import { Quest } from "../engine/task";
 import { step } from "grimoire-kolmafia";
+import { Priorities } from "../engine/priority";
 
 export const MosquitoQuest: Quest = {
   name: "Mosquito",
@@ -9,6 +10,7 @@ export const MosquitoQuest: Quest = {
     {
       name: "Start",
       after: ["Toot/Finish"],
+      priority: () => Priorities.Free,
       ready: () => myLevel() >= 2,
       completed: () => step("questL02Larva") !== -1,
       do: () => visitUrl("council.php"),
@@ -36,6 +38,7 @@ export const MosquitoQuest: Quest = {
     {
       name: "Finish",
       after: ["Mosquito"],
+      priority: () => Priorities.Free,
       completed: () => step("questL02Larva") === 999,
       do: () => visitUrl("council.php"),
       limit: { tries: 1 },
