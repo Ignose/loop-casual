@@ -1,6 +1,6 @@
 import { Args } from "grimoire-kolmafia";
 import { Item } from "kolmafia";
-import { $familiar, $item } from "libram";
+import { $familiar, $item, $monster, get } from "libram";
 
 const worksheds = [
   [$item`none`, "Do nothing"],
@@ -9,6 +9,8 @@ const worksheds = [
   [$item`Asdon Martin keyfob (on ring)`, "Swap to asdon martin keyfob"],
   [$item`TakerSpace letter of Marque`, "Swap to TakerSpace letter of Marque"],
 ] as [Item, string][];
+
+export const voa = get("valueOfAdventure");
 
 export const args = Args.create(
   "loopsmol",
@@ -109,6 +111,14 @@ export const args = Args.create(
       delevel: Args.flag({
         help: "Delevel to level 13 with hot dogs before fighting the NS",
         default: false,
+      }),
+      stashClan: Args.string({
+        help: "Clan to use for Stash",
+        default: "",
+      }),
+      target: Args.monster({
+        help: "Monster to use as our copytarget.",
+        default: $monster`Witchess Knight`,
       }),
       tune: Args.string({
         help: "Use your hewn moon-rune spoon to retune to this sign after dieting.",

@@ -7,8 +7,10 @@ import {
   eat,
   equip,
   familiarEquippedEquipment,
+  fullnessLimit,
   getIngredients,
   haveEffect,
+  inebrietyLimit,
   Item,
   itemAmount,
   itemType,
@@ -49,9 +51,9 @@ import {
   MenuItem,
   sumNumbers,
 } from "libram";
-import { args } from "../main";
 import { Quest } from "../engine/task";
 import { Priorities } from "../engine/priority";
+import { voa } from "../args";
 
 export const DietQuest: Quest = {
   name: "Diet",
@@ -61,13 +63,13 @@ export const DietQuest: Quest = {
       after: [],
       priority: () => Priorities.Free,
       completed: () =>
-        myDaycount() > 1 || (myFullness() >= args.stomach && myInebriety() >= args.liver),
+        myDaycount() > 1 || (myFullness() >= fullnessLimit() && myInebriety() >= inebrietyLimit()),
       ready: () => myBasestat(myPrimestat()) >= 149 || myAdventures() <= 1,
       do: (): void => {
         if (have($item`astral six-pack`)) {
           use($item`astral six-pack`);
         }
-        const MPA = args.voa;
+        const MPA = voa;
 
         // Use the mime shotglass if available
         if (!get("_mimeArmyShotglassUsed") && have($item`mime army shotglass`)) {
@@ -76,9 +78,9 @@ export const DietQuest: Quest = {
         }
 
         // Compute a diet to bring us up to the desired usage
-        const food = Math.max(args.stomach - myFullness(), 0);
-        const booze = Math.max(args.liver - myInebriety(), 0);
-        const spleen = Math.max(args.spleen - mySpleenUse(), 0);
+        const food = Math.max(myFullness(), 0);
+        const booze = Math.max(myInebriety(), 0);
+        const spleen = Math.max(mySpleenUse(), 0);
         const plannedDiet = Diet.plan(MPA, menu(), {
           food: food,
           booze: booze,
